@@ -3,6 +3,8 @@ from celery import Celery
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 
+print(f"--- DEBUG: Celery connecting to Redis at: {REDIS_HOST} ---")
+
 app = Celery(
     "scraper",
     broker=f"redis://{REDIS_HOST}:6379/0",

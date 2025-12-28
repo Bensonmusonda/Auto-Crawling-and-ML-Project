@@ -2,29 +2,29 @@ import os
 import sys
 import json
 import redis
-import scrapy
 from celery import Celery
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
+from config import Config
+from celery_app import app
 
 sys.path.append(os.getcwd())
 
-REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
-
-from celery_app import app
-r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
-
-try:
-    from crawler.crawler.spiders.spiders import UniversalSpider
-except ImportError:
-    from crawler.spiders.spiders import UniversalSpider
+r = redis.Redis(host=Config.REDIS_HOST, port=6379, db=0)
 
 @app.task(bind=True)
 def run_crawl_task(self, config_input):
     """
     Celery task to run a Scrapy crawl.
-    Handles both dict and JSON string inputs for flexibility.
+    Uses explicit Scrapy Settings to ensure the PostgresPipeline is active.
     """
+    from scrapy.crawler import CrawlerProcess
+    from scrapy.settings import Settings
+    
+    try:
+        from crawler.crawler.spiders.spiders import UniversalSpider
+    except ImportError:
+        from crawler.spiders.spiders import UniversalSpider
+
+    # Parse input config
     if isinstance(config_input, str):
         config_dict = json.loads(config_input)
     else:
@@ -41,15 +41,22 @@ def run_crawl_task(self, config_input):
         "url": config_dict.get("start_url")
     }))
 
-    os.environ.setdefault('SCRAPY_SETTINGS_MODULE', 'crawler.crawler.settings')
-    settings = get_project_settings()
+    settings = Settings()
     
-    settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'])
+    settings.setmodule('crawler.crawler.settings', priority='project')
     
+    settings.set('ITEM_PIPELINES', {
+        'crawler.crawler.pipelines.PostgresPipeline': 300,
+    }, priority='cmdline')
+    
+    settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'], priority='cmdline')
+    settings.set('ROBOTSTXT_OBEY', False, priority='cmdline')
+    settings.set('LOG_LEVEL', 'INFO', priority='cmdline')
+
     try:
         process = CrawlerProcess(settings)
         process.crawl(UniversalSpider, config=json.dumps(config_dict))
-        process.start()
+        process.start() # Blocks until spider finishes
         
         r.publish('crawl_events', json.dumps({
             "job_id": job_id, 

@@ -6,3 +6,5 @@ twisted==22.10.0
 cryptography
 
 pydantic==2.5.3
+psycopg2-binary
+dotenv
