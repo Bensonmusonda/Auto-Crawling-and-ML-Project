@@ -20,11 +20,16 @@ except ImportError:
     from crawler.spiders.spiders import UniversalSpider
 
 @app.task(bind=True)
-def run_crawl_task(self, config_dict: dict):
+def run_crawl_task(self, config_input):
     """
     Celery task to run a Scrapy crawl.
-    The 'prefork' pool in Docker handles the Twisted Reactor restart issue.
+    Handles both dict and JSON string inputs for flexibility.
     """
+    if isinstance(config_input, str):
+        config_dict = json.loads(config_input)
+    else:
+        config_dict = config_input
+
     job_id = self.request.id
     config_dict["job_id"] = job_id
     
