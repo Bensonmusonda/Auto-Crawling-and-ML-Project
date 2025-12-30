@@ -59,3 +59,22 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Client disconnected")
 
+@app.websocket("/websocket/crawl_events")
+async def rt_crawl_events(websocket: WebSocket):
+    await websocket.accept()
+
+    async_r = await redis.from_url(f"redis://{cfg.REDIS_HOST}:6379", decode_responses=True)
+    pubsub = async_r.pubsub()
+    await pubsub.subscribe("crawl_events")
+
+    try:
+        # job_id = await websocket.receive_text()
+        # print(f"[JOB ID: {job_id}] Listening for events...")
+
+        async for message in pubsub.listen():
+            if message and message['type'] == 'message':
+                await websocket.send_text(f"{message['data']}")
+    except WebSocketDisconnect:
+        print("Client disconnected")
+    finally:
+        pubsub.close()
