@@ -1,7 +1,7 @@
 import json
 import redis.asyncio as redis
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .schemas import CrawlRequest
 from config import Config
@@ -44,3 +44,17 @@ async def monitor_crawl_events():
                 print(f"Event: {message['data']}")
     finally:
         await pubsub.close()
+
+@app.websocket("/websocket")
+async def websocket_endpoint(websocket: WebSocket):
+    a = 0
+    await websocket.accept()
+    try:
+        data = await websocket.receive_text()
+        await websocket.send_text(f"You said: '{data}'")
+        while True:
+            await websocket.send_text(f"seconds since connection: {a}")
+            await asyncio.sleep(1)
+            a = a + 1
+    except WebSocketDisconnect:
+        print("Client disconnected")
