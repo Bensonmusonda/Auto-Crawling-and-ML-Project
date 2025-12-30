@@ -10,11 +10,11 @@ from tasks import run_crawl_task
 app = FastAPI()
 cfg = Config()
 
-@app.get("/")
+@app.get("/api/")
 def get_root():
     return {"Backend is running"}
 
-@app.get("/health/redis")
+@app.get("/api/health/redis")
 async def get_redis_health_check():
     try:
         r = await redis.Redis(host=cfg.REDIS_HOST, port=6379, decode_responses=True)
@@ -23,7 +23,7 @@ async def get_redis_health_check():
     except Exception as e:
         return {"error": str(e)}
     
-@app.post("/crawl")
+@app.post("/api/crawl")
 async def send_crawl_task(config_request: CrawlRequest):
     json_config = config_request.model_dump()
     
@@ -32,7 +32,7 @@ async def send_crawl_task(config_request: CrawlRequest):
 
     return {f"started crawl job": result.id}
 
-@app.get("/crawl/monitor")
+@app.get("/api/crawl/monitor")
 async def monitor_crawl_events():
     async_r = await redis.from_url(f"redis://{cfg.REDIS_HOST}:6379", decode_responses=True)
     pubsub = async_r.pubsub()
@@ -58,3 +58,4 @@ async def websocket_endpoint(websocket: WebSocket):
             a = a + 1
     except WebSocketDisconnect:
         print("Client disconnected")
+
