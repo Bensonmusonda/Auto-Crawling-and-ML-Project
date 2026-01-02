@@ -48,6 +48,12 @@ def run_crawl_task(self, config_input):
     settings.set('ITEM_PIPELINES', {
         'crawler.crawler.pipelines.PostgresPipeline': 300,
     }, priority='cmdline')
+
+    settings.set('ROBOTSTXT_OBEY', True)
+    settings.set('DOWNLOAD_DELAY', 1) 
+    settings.set('AUTOTHROTTLE_ENABLED', True) 
+    settings.set('CONCURRENT_REQUESTS', 4)
+    settings.set('SCHEDULER_DISK_QUEUE', 'scrapy.squeues.PickleFifoDiskQueue')
     
     settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'], priority='cmdline')
     settings.set('ROBOTSTXT_OBEY', True)
@@ -56,7 +62,7 @@ def run_crawl_task(self, config_input):
     try:
         process = CrawlerProcess(settings)
         process.crawl(UniversalSpider, config=json.dumps(config_dict))
-        process.start() # Blocks until spider finishes
+        process.start()
         
         r.publish('crawl_events', json.dumps({
             "job_id": job_id, 
