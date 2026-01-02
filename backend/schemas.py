@@ -6,7 +6,8 @@ class PaginationConfig(BaseModel):
     max_pages: int = 5
 
 class CrawlRequest(BaseModel):
-    job_id: str
+    job_id: Optional[str] = None
+    dataset_name: str
     start_url: str
     crawl_type: str
     item_selectors: Dict[str, str]

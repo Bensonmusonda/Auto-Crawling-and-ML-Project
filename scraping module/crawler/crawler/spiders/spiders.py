@@ -17,6 +17,7 @@ class UniversalSpider(scrapy.Spider):
             self.config = json.loads(config)
 
         self.job_id = self.config["job_id"]
+        self.dataset_name = self.config["dataset_name"]
         self.start_urls = [self.config["start_url"]]
         self.crawl_type = self.config["crawl_type"]
         self.pagination = self.config.get("pagination")
@@ -90,6 +91,7 @@ class UniversalSpider(scrapy.Spider):
                 item[field] = None
 
         item["job_id"] = self.job_id
+        item["dataset_name"] = self.dataset_name
         item["url"] = url
         return item
 

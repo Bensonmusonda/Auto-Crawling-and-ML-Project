@@ -50,7 +50,7 @@ def run_crawl_task(self, config_input):
     }, priority='cmdline')
     
     settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'], priority='cmdline')
-    settings.set('ROBOTSTXT_OBEY', False, priority='cmdline')
+    settings.set('ROBOTSTXT_OBEY', True)
     settings.set('LOG_LEVEL', 'INFO', priority='cmdline')
 
     try:

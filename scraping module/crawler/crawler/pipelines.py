@@ -22,6 +22,7 @@ class PostgresPipeline:
             CREATE TABLE IF NOT EXISTS scraped_items (
                 id SERIAL PRIMARY KEY,
                 job_id VARCHAR(255),
+                dataset_name VARCHAR(255),
                 url TEXT,
                 data JSONB,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -37,12 +38,13 @@ class PostgresPipeline:
 
     def process_item(self, item, spider):
         job_id = item.pop("job_id", "unknown")
+        dataset_name = item.pop("dataset_name", "unknown")
         url = item.pop("url", "unknown")
         
         try:
             self.cur.execute(
-                "INSERT INTO scraped_items (job_id, url, data) VALUES (%s, %s, %s)",
-                (job_id, url, Json(item))
+                "INSERT INTO scraped_items (job_id, url, dataset_name, data) VALUES (%s, %s, %s, %s)",
+                (job_id, url, dataset_name, Json(item))
             )
             self.connection.commit()
         except Exception as e:
