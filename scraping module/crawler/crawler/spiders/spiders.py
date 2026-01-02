@@ -68,37 +68,63 @@ class UniversalSpider(scrapy.Spider):
         self.emit_progress()
 
     def handle_pagination(self, response: Response):
-        """Handles finding the next page and yielding a new request."""
         if not self.pagination:
             return
 
-        selector = self.pagination.get("selector")
-        max_pages = self.pagination.get("max_pages", 5)
+        if not hasattr(self, 'list_pages_count'):
+            self.list_pages_count = 1
 
-        if selector and self.pages_crawled < max_pages:
-            next_page = response.css(selector).attrib.get("href") or response.css(selector + "::attr(href)").get()
-            if next_page:
-                self.logger.info(f"Navigating to next page: {next_page}")
-                yield response.follow(next_page, callback=self.parse)
+        max_pages = self.pagination.get("max_pages", 5)
+        if self.list_pages_count >= max_pages:
+            return
+
+        method = self.pagination.get("method", "selector")
+
+        if method == "numeric":
+            self.list_pages_count += 1
+            
+            base_url = self.config["start_url"].split('?')[0]
+            next_url = f"{base_url}?page={self.list_pages_count}"
+            yield response.follow(next_url, callback=self.parse)
+
+        else:
+            selector = self.pagination.get("selector")
+            if selector:
+                next_page = response.css(f"{selector}::attr(href)").get() or \
+                            response.css(f"{selector} a::attr(href)").get()
+                if next_page:
+                    self.list_pages_count += 1
+                    yield response.follow(next_page, callback=self.parse)
 
     def extract_item(self, selector, url: str) -> Dict[str, Any]:
         item = {}
         for field, sel in self.item_selectors.items():
-            results = selector.css(sel).getall()
+            
+            if sel.startswith('/') or sel.startswith('./'):
+                results = selector.xpath(sel).getall()
+            else:
+                results = selector.css(sel).getall()
+            
             if results:
-                item[field] = " ".join([r.strip() for r in results if r.strip()])
+                cleaned = [r.strip() for r in results if r.strip()]
+                
+                separator = ", " if field in ["tags", "platforms", "genre"] else " "
+                item[field] = separator.join(cleaned)
             else:
                 item[field] = None
 
-        item["job_id"] = self.job_id
-        item["dataset_name"] = self.dataset_name
-        item["url"] = url
+        item.update({
+            "job_id": self.job_id,
+            "dataset_name": self.dataset_name,
+            "url": url
+        })
         return item
 
     def emit_progress(self):
         try:
             event_data = {
                 "job_id": self.job_id,
+                "dataset_name": self.dataset_name,
                 "event": "progress",
                 "data": {
                     "pages_crawled": self.pages_crawled,
