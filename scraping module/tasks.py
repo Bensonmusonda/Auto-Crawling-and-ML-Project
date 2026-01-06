@@ -3,13 +3,18 @@ import sys
 import json
 import redis
 from celery import Celery
-from config import Config
 from celery_app import app
 
 sys.path.append(os.getcwd())
 
-r = redis.Redis(host=Config.REDIS_HOST, port=6379, db=0)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "scraper_db")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
 
+r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
 @app.task(bind=True)
 def run_crawl_task(self, config_input):
     """
@@ -19,10 +24,7 @@ def run_crawl_task(self, config_input):
     from scrapy.crawler import CrawlerProcess
     from scrapy.settings import Settings
     
-    try:
-        from crawler.crawler.spiders.spiders import UniversalSpider
-    except ImportError:
-        from crawler.spiders.spiders import UniversalSpider
+    from crawler.crawler.spiders.spiders import UniversalSpider
 
     # Parse input config
     if isinstance(config_input, str):
@@ -58,6 +60,8 @@ def run_crawl_task(self, config_input):
     settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'], priority='cmdline')
     settings.set('ROBOTSTXT_OBEY', True)
     settings.set('LOG_LEVEL', 'INFO', priority='cmdline')
+
+    settings.set('TWISTED_REACTOR', 'twisted.internet.asyncioreactor.AsyncioSelectorReactor', priority='cmdline')
 
     try:
         process = CrawlerProcess(settings)

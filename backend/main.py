@@ -1,14 +1,33 @@
 import json
 import redis.asyncio as redis
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import pandas as pd
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+import io
+import psycopg
+from psycopg.rows import dict_row
+from celery import Celery
 
-from .schemas import CrawlRequest
-from config import Config
-from tasks import run_crawl_task
+from schemas import CrawlRequest
+import os
 
 app = FastAPI()
-cfg = Config()
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "scraper_db")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+celery_app = Celery(
+    'scraper',
+    broker=f'redis://{REDIS_HOST}:6379/0',
+    backend=f'redis://{REDIS_HOST}:6379/1'
+)
 
 @app.get("/api/")
 def get_root():
@@ -17,24 +36,24 @@ def get_root():
 @app.get("/api/health/redis")
 async def get_redis_health_check():
     try:
-        r = await redis.Redis(host=cfg.REDIS_HOST, port=6379, decode_responses=True)
+        r = await redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
         await r.ping()
         return {"redis": "connected", "postgres": "check console"}
     except Exception as e:
         return {"error": str(e)}
-    
+
 @app.post("/api/crawl")
 async def send_crawl_task(config_request: CrawlRequest):
     json_config = config_request.model_dump()
     
-    result = run_crawl_task.delay(json_config)
+    result = celery_app.send_task('tasks.run_crawl_task', args=(json_config,))
     asyncio.create_task(monitor_crawl_events())
-
-    return {f"started crawl job": result.id}
+    return {"started crawl job": result.id}
 
 @app.get("/api/crawl/monitor")
 async def monitor_crawl_events():
-    async_r = await redis.from_url(f"redis://{cfg.REDIS_HOST}:6379", decode_responses=True)
+    print(f"Connecting toredis://{REDIS_HOST}:6379")
+    async_r = await redis.from_url(f"redis://{REDIS_HOST}:6379", decode_responses=True)
     pubsub = async_r.pubsub()
     await pubsub.subscribe("crawl_events")
     
@@ -63,7 +82,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def rt_crawl_events(websocket: WebSocket):
     await websocket.accept()
 
-    async_r = await redis.from_url(f"redis://{cfg.REDIS_HOST}:6379", decode_responses=True)
+    async_r = await redis.from_url(f"redis://{REDIS_HOST}:6379", decode_responses=True)
     pubsub = async_r.pubsub()
     await pubsub.subscribe("crawl_events")
 
@@ -78,3 +97,44 @@ async def rt_crawl_events(websocket: WebSocket):
         print("Client disconnected")
     finally:
         pubsub.close()
+
+@app.get("/api/generate/csv")
+async def generate_csv(dataset_name: str):
+    connection = None
+    try:
+        print(f"Connecting to: {DATABASE_URL}")
+        
+        connection = await psycopg.AsyncConnection.connect(
+            conninfo=DATABASE_URL,
+            connect_timeout=10
+        )
+        
+        async with connection.cursor() as cur:
+            query = "SELECT data FROM scraped_items WHERE dataset_name = %s;"
+            await cur.execute(query, (dataset_name,))
+            records = await cur.fetchall()
+
+            rows = [row[0] for row in records]
+        
+        if not rows:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        df = pd.DataFrame(rows)
+        stream = io.StringIO()
+        df.to_csv(stream, index=False, encoding="utf-8-sig")
+
+        response = StreamingResponse( 
+            iter([stream.getvalue()]),
+            media_type="text/csv"
+        )
+
+        response.headers["Content-Disposition"] = f"attachment; filename={dataset_name}.csv"
+        return response
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        if connection:
+            await connection.close()

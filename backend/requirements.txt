@@ -1,3 +1,7 @@
+celery==5.3.6
+pandas==2.3.3
+psycopg[binary]
+
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.0

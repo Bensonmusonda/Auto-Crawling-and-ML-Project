@@ -3,7 +3,9 @@ import scrapy
 import redis
 from scrapy.http import Response
 from typing import Dict, Any, Optional
-from config import Config
+import os
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 class UniversalSpider(scrapy.Spider):
     name = "universal_spider"
@@ -25,8 +27,7 @@ class UniversalSpider(scrapy.Spider):
         self.item_selectors = self.config["item_selectors"]
         self.container_selector = self.config.get("container_selector")
 
-        cfg = Config()
-        self.r = redis.Redis(host=cfg.REDIS_HOST, port=6379, db=0)
+        self.r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
 
         self.pages_crawled = 0
         self.items_scraped = 0

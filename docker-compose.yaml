@@ -1,0 +1,65 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis_service
+    ports:
+      - "6379:6379"
+    networks:
+      - scraper_network
+
+  worker:
+    build:
+      context: ./scraping module
+    command: celery -A tasks worker --loglevel=info
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    networks:
+      - scraper_network
+    volumes:
+      - ./scraping module:/app
+
+  backend:
+    build:
+      context: ./backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload  # --reload for dev hot-reloading
+    ports:
+      - "8000:8000"  # Expose FastAPI on host port 8000
+    depends_on:
+      - redis
+    # Add if postgres service is included: - postgres
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # If needed, like in worker
+    env_file:
+      - .env
+    networks:
+      - scraper_network
+    volumes:
+      - ./backend:/app  # For dev hot-reloading
+
+  # Optional: Add this to containerize PostgreSQL (highly recommended for end-to-end setup)
+  # Adjust env vars to match your config.py or .env (e.g., DB_USER='postgres', DB_PASSWORD='password', etc.)
+  # Your PostgresPipeline and backend will connect via DB_HOST='postgres'
+  postgres:
+    image: postgres:14-alpine
+    container_name: postgres_service
+    environment:
+      POSTGRES_USER: postgres  # Change to your cfg.DB_USER
+      POSTGRES_PASSWORD: password  # Change to your cfg.DB_PASSWORD
+      POSTGRES_DB: automl_db  # Change to your cfg.DB_NAME
+    ports:
+      - "5432:5432"  # Expose for local tools if needed
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - scraper_network
+
+volumes:
+  pgdata:  # Persistent volume for DB data
+
+networks:
+  scraper_network:
+    driver: bridge
