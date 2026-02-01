@@ -71,3 +71,26 @@ class PostgresPipeline:
                 await self.connection.rollback()
             
         return item
+
+class ValidationPipeline:
+    """
+    Writes validation results to a temp file specified in settings.
+    """
+    def __init__(self, result_file):
+        self.result_file = result_file
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(
+            result_file=crawler.settings.get('VALIDATION_RESULT_FILE')
+        )
+
+    def process_item(self, item, spider):
+        if item.get('type') == 'validation_result' and self.result_file:
+            import json
+            try:
+                with open(self.result_file, 'w') as f:
+                    json.dump(item, f)
+            except Exception as e:
+                spider.logger.error(f"Failed to write validation result: {e}")
+        return item

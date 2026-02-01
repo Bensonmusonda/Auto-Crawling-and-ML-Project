@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Dict, Optional
+from typing import List, Dict, Optional, Any, Optional
 
 class PaginationConfig(BaseModel):
     selector: str
@@ -14,3 +14,12 @@ class CrawlRequest(BaseModel):
     link_selector: Optional[str] = None
     container_selector: Optional[str] = None
     pagination: Optional[PaginationConfig] = None
+
+class PipelineStep(BaseModel):
+    step: str
+    params: Dict[str, Any]
+
+# Use this name consistently
+class PipelineConfig(BaseModel):
+    dataset_name: str
+    steps: List[PipelineStep]

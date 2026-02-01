@@ -83,3 +83,91 @@ def run_crawl_task(self, config_input):
         }))
         print(f"Task Failed: {str(e)}")
         raise e
+
+
+
+@app.task(bind=True, name='tasks.validate_selector')
+def validate_selector(self, url, selector):
+    """
+    Runs the ValidatorSpider to check a selector.
+    """
+    from scrapy.crawler import CrawlerProcess
+    from scrapy.settings import Settings
+    from crawler.crawler.spiders.validator_spider import ValidatorSpider
+    import json
+    import multiprocessing
+
+    # Simple queue-based result capture since Scrapy is async and runs in reactor
+    # We can't return directly from the spider easily without a little plumbing
+    # or using a dedicated item pipeline that writes to a known location/db.
+    # For a lightweight check, we can use a fresh process or just rely on the logging/result?
+    
+    # Better approach for single-task execution in Celery:
+    # Use scrapy.crawler.CrawlerRunner if we were in async, but here we are in a worker process.
+    # CrawlerProcess captures the signal. 
+    
+    settings = Settings()
+    settings.set('LOG_LEVEL', 'ERROR')
+    # Use a specific pipeline or just capture items?
+    # Let's just use a trick: capture items in a list attached to the spider instance?
+    # Or write to a temp file.
+    
+    results = []
+    
+    class ResultCollectorPipeline:
+        def process_item(self, item, spider):
+            results.append(item)
+            return item
+
+    settings.set('ITEM_PIPELINES', {
+        # We need to register this class somehow, or just defined it in a module?
+        # Simpler: just use a list that the spider populates? 
+        # But pipeline is safer.
+    })
+    
+    # Actually, the spider yields the result. We can use a custom CrawlerProcess/Signal?
+    # For simplicity in this env, let's use a thread-safe approach or just a shared dict if using threads.
+    # But CrawlerProcess blocks.
+    
+    # Let's try to just run it and grab the output from the spider instance if possible?
+    # No, spider instance is created inside the process.
+    
+    # Let's use the `scrapy.crawler.CrawlerRunner` approach inside a helper?
+    # OR: just return the spider's stats?
+    
+    # Let's stick to the Plan B: "Dry Run" relies on specific spider logic.
+    # We will pass a mutable list to the spider start args? No.
+    
+    # Let's rewrite ValidatorSpider to write to a temp file for this task?
+    # yes, safest.
+    
+    import tempfile
+    fd, path = tempfile.mkstemp()
+    
+    settings.set('FEEDS', {
+        path: {'format': 'json'}
+    })
+    
+    try:
+        process = CrawlerProcess(settings)
+        process.crawl(ValidatorSpider, url=url, selectors=json.dumps({"target": selector}))
+        process.start()
+        
+        # Read the file
+        with os.fdopen(fd, 'r') as tmp:
+            content = tmp.read()
+            data = json.loads(content) if content.strip() else []
+            
+        os.remove(path)
+        
+        # data should contain the items yielded.
+        # We yielded {"type": "validation_result", "results": ...}
+        
+        for item in data:
+            if item.get("type") == "validation_result":
+                return item["results"]["target"]
+                
+        return {"valid": False, "error": "No result returned from spider"}
+
+    except Exception as e:
+        return {"valid": False, "error": str(e)}

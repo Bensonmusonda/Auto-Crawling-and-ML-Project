@@ -1,0 +1,15 @@
+/* Highlighter Overlay */
+.ac-selector-highlight {
+  outline: 2px solid #ff0055 !important;
+  background-color: rgba(255, 0, 85, 0.1) !important;
+  cursor: crosshair !important;
+  z-index: 2147483647 !important; /* Max Z-Index */
+}
+
+/* Selected Element Overlay */
+.ac-selector-selected {
+  outline: 2px solid #00cc66 !important;
+  background-color: rgba(0, 204, 102, 0.2) !important;
+}
+
+/* Info Box (can be injected via JS if needed, or just rely on popup) */

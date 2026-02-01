@@ -46,16 +46,30 @@ services:
   postgres:
     image: postgres:14-alpine
     container_name: postgres_service
-    environment:
-      POSTGRES_USER: postgres  # Change to your cfg.DB_USER
-      POSTGRES_PASSWORD: password  # Change to your cfg.DB_PASSWORD
-      POSTGRES_DB: automl_db  # Change to your cfg.DB_NAME
+    env_file:
+    - .env   # So it reads POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB from your .env
+    environment: []
     ports:
       - "5432:5432"  # Expose for local tools if needed
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
       - scraper_network
+
+  ml_worker:
+    build:
+      context: ./backend  # Uses the backend Dockerfile
+    # Note: We point Celery to 'tasks' which is backend/tasks.py
+    command: celery -A tasks worker --loglevel=info -Q ml_tasks
+    depends_on:
+      - redis
+      - postgres
+    env_file:
+      - .env
+    networks:
+      - scraper_network
+    volumes:
+      - ./backend:/app
 
 volumes:
   pgdata:  # Persistent volume for DB data

@@ -20,6 +20,7 @@ services:
       - scraper_network
     volumes:
       - .:/app
+      
 
 networks:
   scraper_network:
