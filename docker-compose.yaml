@@ -8,9 +8,15 @@ services:
       - scraper_network
 
   worker:
-    build:
-      context: ./scraping module
-    command: celery -A tasks worker --loglevel=info
+    # Use official Playwright image instead of custom build
+    image: mcr.microsoft.com/playwright/python:v1.40.0-jammy
+    container_name: scraper_worker
+    working_dir: /app
+    command: >
+      bash -c "
+        pip install --no-cache-dir -r requirements.txt &&
+        celery -A tasks worker --loglevel=info
+      "
     depends_on:
       - redis
     extra_hosts:
@@ -25,32 +31,28 @@ services:
   backend:
     build:
       context: ./backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload  # --reload for dev hot-reloading
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "8000:8000"  # Expose FastAPI on host port 8000
+      - "8000:8000"
     depends_on:
       - redis
-    # Add if postgres service is included: - postgres
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # If needed, like in worker
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     networks:
       - scraper_network
     volumes:
-      - ./backend:/app  # For dev hot-reloading
+      - ./backend:/app
 
-  # Optional: Add this to containerize PostgreSQL (highly recommended for end-to-end setup)
-  # Adjust env vars to match your config.py or .env (e.g., DB_USER='postgres', DB_PASSWORD='password', etc.)
-  # Your PostgresPipeline and backend will connect via DB_HOST='postgres'
   postgres:
     image: postgres:14-alpine
     container_name: postgres_service
     env_file:
-    - .env   # So it reads POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB from your .env
+      - .env
     environment: []
     ports:
-      - "5432:5432"  # Expose for local tools if needed
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -58,8 +60,7 @@ services:
 
   ml_worker:
     build:
-      context: ./backend  # Uses the backend Dockerfile
-    # Note: We point Celery to 'tasks' which is backend/tasks.py
+      context: ./backend
     command: celery -A tasks worker --loglevel=info -Q ml_tasks
     depends_on:
       - redis
@@ -72,7 +73,8 @@ services:
       - ./backend:/app
 
 volumes:
-  pgdata:  # Persistent volume for DB data
+  pgdata:
+
 
 networks:
   scraper_network:

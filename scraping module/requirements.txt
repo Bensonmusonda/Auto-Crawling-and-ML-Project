@@ -9,4 +9,4 @@ pydantic==2.5.3
 psycopg[binary]
 dotenv
 
-pathlib
+playwright==1.40.0 

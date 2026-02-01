@@ -1,48 +1,161 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <style>
-    body { width: 320px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; color: #333; }
-    h2 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
-    
-    .btn { display: block; width: 100%; padding: 8px; margin: 8px 0; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
-    .btn:hover { background: #0056b3; }
-    .btn-secondary { background: #6c757d; }
-    .btn-secondary:hover { background: #545b62; }
-    .btn-success { background: #28a745; display: none; } 
-    .btn-danger { background: #dc3545; }
+    body {
+      width: 380px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      padding: 12px;
+      color: #333;
+      max-height: 600px;
+      overflow-y: auto;
+    }
 
-    .result-box { background: #f8f9fa; border: 1px solid #dee2e6; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 13px; display: none; }
-    .label { font-weight: bold; display: block; margin-bottom: 2px; color: #666; font-size: 11px; }
-    code { display: block; background: #fff; padding: 4px; border: 1px solid #eee; border-radius: 2px; word-break: break-all; font-family: monospace; color: #e83e8c; }
-    
-    #status { margin-top: 8px; font-size: 12px; height: 16px; color: #666; }
-    .badge { display: inline-block; padding: 2px 6px; border-radius: 10px; font-size: 10px; color: white; margin-left: auto; }
+    h2 {
+      margin-top: 0;
+      font-size: 16px;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 8px;
+      color: #007bff;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #0056b3;
+    }
+
+    .btn-secondary {
+      background: #6c757d;
+    }
+
+    .btn-secondary:hover {
+      background: #545b62;
+    }
+
+    .btn-success {
+      background: #28a745;
+      display: none;
+    }
+
+    .btn-danger {
+      background: #dc3545;
+    }
+
+    .result-box {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 12px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 4px;
+      color: #495057;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    code {
+      display: block;
+      background: #fff;
+      padding: 6px 8px;
+      border: 1px solid #dee2e6;
+      border-radius: 3px;
+      word-break: break-all;
+      font-family: 'Courier New', monospace;
+      color: #e83e8c;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-size: 12px;
+      min-height: 18px;
+      color: #666;
+      padding: 6px;
+      border-radius: 3px;
+      font-weight: 500;
+    }
+
+    #alternatives {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #dee2e6;
+    }
+
+    #debugInfo {
+      margin-top: 12px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 10px;
+      color: white;
+      margin-left: auto;
+      font-weight: 600;
+    }
+
+    .section-divider {
+      margin: 12px 0;
+      border-top: 1px dashed #dee2e6;
+    }
   </style>
 </head>
+
 <body>
-  <h2>Auto-Crawler Picker</h2>
-  
+  <h2>🎯 Auto-Crawler Selector Picker</h2>
+
   <button id="togglePicker" class="btn">Start Picking</button>
-  
+
   <div id="selectionResult" class="result-box">
-    <span class="label">CSS Selector:</span>
+    <span class="label">Primary CSS Selector:</span>
     <code id="cssSelector"></code>
-    
-    <span class="label" style="margin-top: 8px;">XPath:</span>
+
+    <span class="label" style="margin-top: 10px;">XPath:</span>
     <code id="xpathSelector"></code>
-    
-    <span class="label" style="margin-top: 8px;">Matched Text (Preview):</span>
-    <div id="textPreview" style="font-size: 12px; color: #444; font-style: italic;"></div>
+
+    <span class="label" style="margin-top: 10px;">Matched Text:</span>
+    <div id="textPreview" style="font-size: 11px; color: #495057; font-style: italic; padding: 4px 0;"></div>
+
+    <div id="alternatives"></div>
   </div>
 
-  <div id="actions" style="display: none; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;">
-    <button id="validateBtn" class="btn btn-secondary">Validate (Server-Side)</button>
-    <button id="exportBtn" class="btn btn-success">Send to App</button>
+  <div id="actions" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 2px solid #dee2e6;">
+    <button id="validateBtn" class="btn btn-secondary">🔍 Validate Selector (Server)</button>
+    <button id="exportBtn" class="btn btn-success">✓ Use This Selector</button>
+    <button id="clearBtn" class="btn btn-secondary" style="background: #dc3545; margin-top: 8px;">🗑️ Clear All
+      Results</button>
   </div>
-  
+
+  <div id="debugInfo"></div>
+
   <div id="status"></div>
 
   <script src="popup.js"></script>
 </body>
+
 </html>

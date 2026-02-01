@@ -171,3 +171,24 @@ def validate_selector(self, url, selector):
 
     except Exception as e:
         return {"valid": False, "error": str(e)}
+
+
+@app.task(bind=True, name='tasks.validate_selector_playwright')
+def validate_selector_playwright_task(self, url: str, selector: str):
+    """
+    Celery task wrapper for Playwright validation.
+    Uses real browser to bypass bot detection (Amazon, etc.)
+    """
+    from playwright_validator import validate_selector_with_playwright
+    
+    try:
+        result = validate_selector_with_playwright(url, selector)
+        return result
+    except Exception as e:
+        return {
+            "count": 0,
+            "valid": False,
+            "error": str(e),
+            "selector_found": False,
+            "blocked": False,
+        }
