@@ -1,22 +1,37 @@
 let isPicking = false;
+let pickingMode = 'field'; // 'container', 'field', 'pagination', 'link'
 let hoveredElement = null;
+let currentContainer = null;
+
+// VERSION CHECK - Updated 2026-02-14 18:50 - FIXED SYNTAX
+const CONTENT_SCRIPT_VERSION = "2.1.1-fixed";
+const LOAD_TIMESTAMP = new Date().toISOString();
+console.log(`🔧 Content Script Loaded - Version: ${CONTENT_SCRIPT_VERSION} at ${LOAD_TIMESTAMP}`);
 
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "togglePicker") {
     isPicking = request.state;
+    pickingMode = request.mode || 'field';
+    currentContainer = request.container || null;
+
     if (!isPicking) {
       removeHighlight();
+      clearAllHighlights();
     }
     sendResponse({ status: isPicking ? "picking_started" : "picking_stopped" });
   } else if (request.action === "clearHighlights") {
-    // Remove all highlights and reset state
-    removeHighlight();
-    document.querySelectorAll('.ac-selector-highlight, .ac-selector-selected').forEach(el => {
-      el.classList.remove('ac-selector-highlight', 'ac-selector-selected');
-    });
+    clearAllHighlights();
     sendResponse({ status: "highlights_cleared" });
+  } else if (request.action === "testSelector") {
+    const result = testSelectorOnPage(request.selector, request.containerSelector);
+    sendResponse(result);
+  } else if (request.action === "previewData") {
+    const preview = previewDataExtraction(request.fields, request.containerSelector);
+    sendResponse(preview);
   }
+
+  return true; // Keep channel open for async response
 });
 
 // Mouse Over: Highlight element
@@ -29,12 +44,16 @@ document.addEventListener("mouseover", (event) => {
 
   hoveredElement = event.target;
   hoveredElement.classList.add("ac-selector-highlight");
+
+  // Show tooltip with element info
+  showHoverTooltip(hoveredElement);
 }, true);
 
 // Mouse Out: Remove highlight
 document.addEventListener("mouseout", (event) => {
   if (!isPicking) return;
   event.target.classList.remove("ac-selector-highlight");
+  hideHoverTooltip();
 }, true);
 
 // Click: Select element
@@ -46,176 +65,483 @@ document.addEventListener("click", (event) => {
 
   const element = event.target;
 
-  // Generate multiple selector strategies
-  const selectorStrategies = generateAllSelectors(element);
+  if (pickingMode === 'container') {
+    handleContainerSelection(element);
+  } else if (pickingMode === 'field') {
+    handleFieldSelection(element);
+  } else if (pickingMode === 'pagination') {
+    handlePaginationSelection(element);
+  } else if (pickingMode === 'link') {
+    handleLinkSelection(element);
+  }
+}, true);
 
-  console.log("Selected element:", element);
-  console.log("All selector strategies:", selectorStrategies);
+// ============================================================================
+// SELECTION HANDLERS
+// ============================================================================
+
+function handleContainerSelection(element) {
+  const patternInfo = detectRepeatingPattern(element);
+
+  if (!patternInfo.isRepeating) {
+    showToast("⚠ This element doesn't appear to be part of a repeating pattern", "warning");
+    return;
+  }
+
+  // The clicked element IS the container (not its parent)
+  const container = element;
+
+  console.log('=== CONTAINER SELECTION DEBUG ===');
+  console.log('Clicked element:', element);
+  console.log('Container:', container);
+  console.log('Container tag:', container.tagName);
+  console.log('Container classes:', container.className);
+
+  // Use special container selector that matches ALL similar elements (no nth-of-type)
+  const containerSelector = generateContainerSelector(container);
+
+  console.log('Generated selector:', containerSelector);
+
+  // Validate it finds multiple items
+  const matches = document.querySelectorAll(containerSelector);
+
+  console.log('Match count:', matches.length);
+  console.log('Matches:', matches);
+
+  if (matches.length < 2) {
+    showToast("⚠ Container selector only matches one element", "warning");
+    return;
+  }
+
+  console.log('✓ Validation passed! Showing toast and sending message...');
+
+  // Flash confirmation on all containers
+  matches.forEach(el => {
+    el.classList.add("ac-container-highlight");
+    setTimeout(() => el.classList.remove("ac-container-highlight"), 2000);
+  });
+
+  showToast(`✓ Container selected! Found ${matches.length} items`, "success");
+  console.log('Toast shown');
+
+  // Send to popup
+  const message = {
+    action: "containerSelected",
+    data: {
+      selector: containerSelector,
+      count: matches.length,
+      tagName: container.tagName,
+      sampleHtml: container.innerHTML.substring(0, 500)
+    }
+  };
+
+  console.log('Sending message to popup:', message);
+
+  chrome.runtime.sendMessage(message, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('Failed to send message:', chrome.runtime.lastError);
+    } else {
+      console.log('Message sent successfully, response:', response);
+    }
+  });
+}
+
+function handleFieldSelection(element) {
+  let containerElement = null;
+  let containerSelector = currentContainer;
+
+  // If we have a container, find which container this element belongs to
+  if (currentContainer) {
+    const containers = document.querySelectorAll(currentContainer);
+    for (let container of containers) {
+      if (container.contains(element)) {
+        containerElement = container;
+        break;
+      }
+    }
+
+    if (!containerElement) {
+      showToast("⚠ Selected element is outside the container", "warning");
+      return;
+    }
+  }
+
+  // Generate selectors
+  const selectors = containerElement
+    ? generateRelativeSelectors(element, containerElement)
+    : generateAbsoluteSelectors(element);
+
+  // Test all selectors and count matches
+  const matchCounts = {};
+  for (const [key, selector] of Object.entries(selectors)) {
+    if (selector && selector !== 'null') {
+      matchCounts[key] = testSelectorOnPage(selector, containerSelector).count;
+    }
+  }
+
+  // Get pattern info
+  const patternInfo = detectRepeatingPattern(element);
 
   // Flash confirmation
   element.classList.add("ac-selector-selected");
   setTimeout(() => element.classList.remove("ac-selector-selected"), 500);
 
+  // Visualize pattern if detected
+  if (patternInfo.isRepeating && patternInfo.similarElements.length > 0) {
+    visualizePattern(patternInfo.similarElements);
+  }
+
+  showToast("✓ Element selected! Configure in popup", "success");
+
   // Send to popup
   chrome.runtime.sendMessage({
-    action: "elementSelected",
+    action: "fieldSelected",
     data: {
       tagName: element.tagName,
-      id: element.id,
-      className: element.className,
-      // Primary selectors
-      selector: selectorStrategies.primary,
-      xpath: selectorStrategies.xpath,
-      // Alternative selectors
-      alternatives: {
-        data_attributes: selectorStrategies.dataAttributes,
-        semantic: selectorStrategies.semantic,
-        text_based: selectorStrategies.textBased,
-        robust_path: selectorStrategies.robustPath,
-        simple_class: selectorStrategies.simpleClass
-      },
-      text: element.innerText.substring(0, 50) + (element.innerText.length > 50 ? "..." : ""),
-      attributes: getAttributes(element),
-      context: getElementContext(element)
+      text: element.innerText?.substring(0, 100) || element.textContent?.substring(0, 100) || '',
+      selectors: selectors,
+      matchCounts: matchCounts,
+      pattern: patternInfo,
+      isInContainer: !!containerElement,
+      containerSelector: containerSelector
     }
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.log("Message sending failed (popup closed?), but background should handle it:", chrome.runtime.lastError.message);
-    }
-    showToast("Element selected! Re-open extension to view.");
   });
-}, true);
-
-function removeHighlight() {
-  if (hoveredElement) {
-    hoveredElement.classList.remove("ac-selector-highlight");
-    hoveredElement = null;
-  }
 }
 
-function getAttributes(el) {
-  const attrs = {};
-  for (let i = 0; i < el.attributes.length; i++) {
-    attrs[el.attributes[i].name] = el.attributes[i].value;
+function handlePaginationSelection(element) {
+  // Must be a link
+  const linkEl = element.tagName === 'A' ? element : element.closest('a');
+
+  if (!linkEl) {
+    showToast("⚠ Please select a link element for pagination", "warning");
+    return;
   }
-  return attrs;
+
+  const selector = generateAbsoluteSelector(linkEl);
+  const href = linkEl.getAttribute('href');
+
+  // Find similar pagination links
+  const allLinks = Array.from(document.querySelectorAll('a[href]'));
+  const similarLinks = allLinks.filter(link =>
+    areElementsSimilar(linkEl, link) && link.getAttribute('href') !== href
+  );
+
+  // Flash confirmation
+  linkEl.classList.add("ac-selector-selected");
+  setTimeout(() => linkEl.classList.remove("ac-selector-selected"), 500);
+
+  showToast(`✓ Pagination link selected`, "success");
+
+  chrome.runtime.sendMessage({
+    action: "paginationSelected",
+    data: {
+      selector: selector,
+      href: href,
+      text: linkEl.innerText?.trim() || '',
+      similarCount: similarLinks.length
+    }
+  });
 }
 
-function getElementContext(el) {
-  // Get context about the element's position and surroundings
+function handleLinkSelection(element) {
+  const linkEl = element.tagName === 'A' ? element : element.closest('a');
+
+  if (!linkEl) {
+    showToast("⚠ Please select a link element", "warning");
+    return;
+  }
+
+  let containerElement = null;
+  let containerSelector = currentContainer;
+
+  // If we have a container, find which container this element belongs to
+  if (currentContainer) {
+    const containers = document.querySelectorAll(currentContainer);
+    for (let container of containers) {
+      if (container.contains(linkEl)) {
+        containerElement = container;
+        break;
+      }
+    }
+  }
+
+  // Generate selector (relative if in container)
+  const selector = containerElement
+    ? generateRelativeSelectors(linkEl, containerElement).primary
+    : generateAbsoluteSelector(linkEl);
+
+  const href = linkEl.getAttribute('href');
+
+  // Find all similar links
+  const testResult = testSelectorOnPage(selector, containerSelector);
+
+  // Flash confirmation
+  linkEl.classList.add("ac-selector-selected");
+  setTimeout(() => linkEl.classList.remove("ac-selector-selected"), 500);
+
+  showToast(`✓ Link selector created (${testResult.count} matches)`, "success");
+
+  chrome.runtime.sendMessage({
+    action: "linkSelected",
+    data: {
+      selector: selector,
+      href: href,
+      text: linkEl.innerText?.trim() || '',
+      count: testResult.count,
+      sampleUrls: testResult.matches.slice(0, 5)
+    }
+  });
+}
+
+// ============================================================================
+// SELECTOR GENERATION - RELATIVE (for use within containers)
+// ============================================================================
+
+function generateRelativeSelectors(element, container) {
+  // Get path from container to element
+  const path = getRelativePath(element, container);
+
+  if (path.length === 0) {
+    // Element IS the container
+    return {
+      primary: element.tagName.toLowerCase(),
+      cssPath: element.tagName.toLowerCase(),
+      xpath: `./${element.tagName.toLowerCase()}`,
+      dataAttr: generateDataAttributeSelector(element),
+      class: generateSimpleClassSelector(element)
+    };
+  }
+
+  // Strategy 1: Simple class selector (preferred for Scrapy)
+  const stableClasses = getStableClasses(element);
+  const simpleClass = stableClasses.length > 0
+    ? `.${stableClasses[0]}`
+    : null;
+
+  // Strategy 2: Tag + class
+  const tagClass = stableClasses.length > 0
+    ? `${element.tagName.toLowerCase()}.${stableClasses[0]}`
+    : null;
+
+  // Strategy 3: CSS path from container (e.g., "div.card > h3 > a")
+  const cssPath = path.map(node => {
+    const tag = node.tagName.toLowerCase();
+    const classes = getStableClasses(node);
+    return classes.length > 0 ? `${tag}.${classes[0]}` : tag;
+  }).join(' > ');
+
+  // Strategy 4: Descendant selector (less strict)
+  const descendant = path.map(node => {
+    const tag = node.tagName.toLowerCase();
+    const classes = getStableClasses(node);
+    return classes.length > 0 ? `${tag}.${classes[0]}` : tag;
+  }).join(' ');
+
+  // Strategy 5: XPath relative to container
+  const xpathParts = path.map(node => {
+    const tag = node.tagName.toLowerCase();
+    const classes = getStableClasses(node);
+    if (classes.length > 0) {
+      return `${tag}[contains(@class, '${classes[0]}')]`;
+    }
+    return tag;
+  });
+  const xpath = './' + xpathParts.join('/');
+
+  // Strategy 6: Data attribute
+  const dataAttr = generateDataAttributeSelector(element);
+
+  // Choose best primary selector
+  let primary = simpleClass || tagClass || cssPath;
+
+  // If data attribute exists and is unique within container, prefer it
+  if (dataAttr) {
+    const testMatches = container.querySelectorAll(dataAttr);
+    if (testMatches.length === 1) {
+      primary = dataAttr;
+    }
+  }
+
   return {
-    parentTag: el.parentElement?.tagName,
-    parentId: el.parentElement?.id,
-    parentClass: el.parentElement?.className,
-    siblingCount: el.parentElement?.children.length,
-    indexInParent: Array.from(el.parentElement?.children || []).indexOf(el),
-    depth: getElementDepth(el)
+    primary: primary,
+    simpleClass: simpleClass,
+    tagClass: tagClass,
+    cssPath: cssPath,
+    descendant: descendant,
+    xpath: xpath,
+    dataAttr: dataAttr
   };
 }
 
-function getElementDepth(el) {
-  let depth = 0;
-  let current = el;
-  while (current.parentElement) {
-    depth++;
-    current = current.parentElement;
-  }
-  return depth;
-}
+// ============================================================================
+// SELECTOR GENERATION - ABSOLUTE (for single items or containers)
+// ============================================================================
 
-function showToast(message) {
-  let toast = document.getElementById("ac-selector-toast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.id = "ac-selector-toast";
-    toast.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      background: #333;
-      color: #fff;
-      padding: 10px 20px;
-      border-radius: 5px;
-      z-index: 10000;
-      font-family: sans-serif;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-      transition: opacity 0.5s;
-    `;
-    document.body.appendChild(toast);
-  }
-  toast.textContent = message;
-  toast.style.opacity = "1";
-  setTimeout(() => {
-    toast.style.opacity = "0";
-  }, 3000);
-}
-
-// --- IMPROVED SELECTOR GENERATION ---
-
-function generateAllSelectors(el) {
-  return {
-    primary: generateBestSelector(el),
-    xpath: generateXPath(el),
-    dataAttributes: generateDataAttributeSelector(el),
-    semantic: generateSemanticSelector(el),
-    textBased: generateTextBasedSelector(el),
-    robustPath: generateRobustPath(el),
-    simpleClass: generateSimpleClassSelector(el)
-  };
-}
-
-function generateBestSelector(el) {
-  // Strategy 1: Data attributes (most stable for SPAs)
-  const dataAttrSelector = generateDataAttributeSelector(el);
-  if (dataAttrSelector && isUnique(dataAttrSelector)) {
-    return dataAttrSelector;
+function generateAbsoluteSelectors(element) {
+  // Strategy 1: Data attributes (most stable)
+  const dataAttr = generateDataAttributeSelector(element);
+  if (dataAttr && isUnique(dataAttr)) {
+    return {
+      primary: dataAttr,
+      dataAttr: dataAttr,
+      class: generateSimpleClassSelector(element),
+      xpath: generateXPath(element),
+      cssPath: generateRobustPath(element)
+    };
   }
 
-  // Strategy 2: Unique stable ID
-  if (el.id && isStableId(el.id) && isUnique(`#${CSS.escape(el.id)}`)) {
-    return `#${CSS.escape(el.id)}`;
-  }
-
-  // Strategy 3: Unique combination of stable attributes
-  const attrSelector = generateAttributeSelector(el);
-  if (attrSelector && isUnique(attrSelector)) {
-    return attrSelector;
-  }
-
-  // Strategy 4: Text-based for unique text elements
-  const textSelector = generateTextBasedSelector(el);
-  if (textSelector && isUnique(textSelector)) {
-    return textSelector;
-  }
-
-  // Strategy 5: Stable class combinations
-  const stableClassSelector = generateStableClassSelector(el);
+  // Strategy 2: Stable class combinations
+  const stableClassSelector = generateStableClassSelector(element);
   if (stableClassSelector && isUnique(stableClassSelector)) {
-    return stableClassSelector;
+    return {
+      primary: stableClassSelector,
+      class: stableClassSelector,
+      dataAttr: dataAttr,
+      xpath: generateXPath(element),
+      cssPath: generateRobustPath(element)
+    };
   }
 
-  // Strategy 6: Fallback to robust path
-  return generateRobustPath(el);
+  // Strategy 3: Attribute selector
+  const attrSelector = generateAttributeSelector(element);
+  if (attrSelector && isUnique(attrSelector)) {
+    return {
+      primary: attrSelector,
+      attribute: attrSelector,
+      class: generateSimpleClassSelector(element),
+      dataAttr: dataAttr,
+      xpath: generateXPath(element),
+      cssPath: generateRobustPath(element)
+    };
+  }
+
+  // Fallback: Robust path (avoiding IDs)
+  const robustPath = generateRobustPath(element);
+
+  return {
+    primary: robustPath,
+    cssPath: robustPath,
+    class: generateSimpleClassSelector(element),
+    dataAttr: dataAttr,
+    xpath: generateXPath(element)
+  };
+}
+
+function generateAbsoluteSelector(element) {
+  const selectors = generateAbsoluteSelectors(element);
+  return selectors.primary;
+}
+
+// Generate selector for containers - matches ALL similar elements (no nth-of-type)
+function generateContainerSelector(element) {
+  // First, try the simplest approach: tag + first stable class
+  const stableClasses = getStableClasses(element);
+
+  if (stableClasses.length > 0) {
+    const tag = element.tagName.toLowerCase();
+    const simpleSelector = `${tag}.${stableClasses[0]}`;
+    const matches = document.querySelectorAll(simpleSelector);
+
+    console.log(`Trying simple selector: ${simpleSelector} (${matches.length} matches)`);
+
+    if (matches.length >= 2) {
+      // This simple selector works!
+      return simpleSelector;
+    }
+  }
+
+  // If simple doesn't work, try with parent context
+  const parent = element.parentElement;
+  if (parent && parent.tagName !== 'BODY') {
+    const parentTag = parent.tagName.toLowerCase();
+    const parentClasses = getStableClasses(parent);
+    const childTag = element.tagName.toLowerCase();
+    const childClasses = getStableClasses(element);
+
+    let parentSel = parentTag;
+    if (parentClasses.length > 0) {
+      parentSel += `.${parentClasses[0]}`;
+    }
+
+    let childSel = childTag;
+    if (childClasses.length > 0) {
+      childSel += `.${childClasses[0]}`;
+    }
+
+    const contextSelector = `${parentSel} > ${childSel}`;
+    const matches = document.querySelectorAll(contextSelector);
+
+    console.log(`Trying parent > child: ${contextSelector} (${matches.length} matches)`);
+
+    if (matches.length >= 2) {
+      return contextSelector;
+    }
+  }
+
+  // Fallback: build full path but limit to 3 levels
+  const path = [];
+  let current = element;
+
+  while (current && current.nodeType === Node.ELEMENT_NODE && path.length < 3) {
+    let selector = current.tagName.toLowerCase();
+
+    const dataAttr = generateDataAttributeSelector(current);
+    if (dataAttr) {
+      path.unshift(dataAttr);
+      break;
+    }
+
+    const stableClasses = getStableClasses(current);
+    if (stableClasses.length > 0) {
+      selector += `.${stableClasses[0]}`; // Use only FIRST stable class
+    }
+
+    path.unshift(selector);
+    current = current.parentElement;
+
+    if (current?.tagName.toLowerCase() === 'body') {
+      break;
+    }
+  }
+
+  return path.join(' > ');
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+function getRelativePath(element, container) {
+  const path = [];
+  let current = element;
+
+  while (current && current !== container && current.parentElement) {
+    path.unshift(current);
+    current = current.parentElement;
+
+    if (path.length > 10) break; // Safety
+  }
+
+  return path;
 }
 
 function generateDataAttributeSelector(el) {
-  // Look for data-* attributes (common in modern frameworks)
   const dataAttrs = ['data-testid', 'data-test', 'data-id', 'data-component', 'data-cy', 'data-qa'];
 
   for (const attr of dataAttrs) {
     const value = el.getAttribute(attr);
     if (value) {
-      return `[${attr}="${value}"]`;
+      return `[${attr}="${CSS.escape(value)}"]`;
     }
   }
 
   // Check for other stable data attributes
   for (let i = 0; i < el.attributes.length; i++) {
     const attrName = el.attributes[i].name;
-    if (attrName.startsWith('data-') && !attrName.includes('dynamic') && !attrName.includes('random')) {
+    if (attrName.startsWith('data-') && !attrName.match(/(dynamic|random|index|key|uid)/i)) {
       const value = el.attributes[i].value;
-      if (value && value.length < 50 && !value.match(/\d{10,}/)) { // Avoid long IDs or timestamps
-        return `[${attrName}="${value}"]`;
+      if (value && value.length < 50 && !value.match(/\d{10,}/)) {
+        return `[${attrName}="${CSS.escape(value)}"]`;
       }
     }
   }
@@ -224,13 +550,12 @@ function generateDataAttributeSelector(el) {
 }
 
 function generateAttributeSelector(el) {
-  // Use stable attributes like role, aria-label, name, type, etc.
-  const stableAttrs = ['role', 'aria-label', 'aria-labelledby', 'name', 'type', 'placeholder', 'title'];
+  const stableAttrs = ['role', 'aria-label', 'name', 'type', 'placeholder', 'title', 'rel'];
 
   for (const attr of stableAttrs) {
     const value = el.getAttribute(attr);
     if (value) {
-      const selector = `${el.tagName.toLowerCase()}[${attr}="${value}"]`;
+      const selector = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(value)}"]`;
       if (isUnique(selector)) {
         return selector;
       }
@@ -238,35 +563,6 @@ function generateAttributeSelector(el) {
   }
 
   return null;
-}
-
-function generateSemanticSelector(el) {
-  // Use semantic HTML and ARIA roles
-  const role = el.getAttribute('role');
-  const ariaLabel = el.getAttribute('aria-label');
-
-  if (role && ariaLabel) {
-    return `[role="${role}"][aria-label="${ariaLabel}"]`;
-  }
-
-  if (role) {
-    const tag = el.tagName.toLowerCase();
-    return `${tag}[role="${role}"]`;
-  }
-
-  return null;
-}
-
-function generateTextBasedSelector(el) {
-  // For elements with unique text content
-  const text = el.innerText?.trim();
-  if (!text || text.length > 50 || text.length < 3) return null;
-
-  const tag = el.tagName.toLowerCase();
-
-  // Use :contains-like approach (though CSS doesn't support it, XPath does)
-  // For CSS, we can suggest this as an alternative
-  return `${tag}:has-text("${text.substring(0, 30)}")`;
 }
 
 function generateSimpleClassSelector(el) {
@@ -297,28 +593,24 @@ function getStableClasses(el) {
 
   return el.className.split(/\s+/)
     .filter(c => c.length > 0)
-    .filter(c => !c.startsWith('ac-selector')) // Ignore our own classes
-    .filter(c => !c.match(/^(hover|active|focus|selected|disabled)$/)) // Ignore state classes
-    .filter(c => !c.match(/\d{5,}/)) // Ignore classes with long numbers (likely dynamic)
-    .filter(c => !c.match(/^[a-z0-9]{20,}$/i)) // Ignore very long random-looking classes
+    .filter(c => !c.startsWith('ac-selector')) // Ignore our classes
+    .filter(c => !c.match(/^(hover|active|focus|selected|disabled|open|closed)$/i)) // State classes
+    .filter(c => !c.match(/\d{5,}/)) // Long numbers (likely dynamic)
+    .filter(c => !c.match(/^[a-z0-9]{20,}$/i)) // Very long random strings
+    .filter(c => !c.match(/-\d{4,}$/)) // Ends with long number
     .map(c => CSS.escape(c));
 }
 
 function generateRobustPath(el) {
-  // Build a path using stable attributes when possible
   const path = [];
   let current = el;
 
   while (current && current.nodeType === Node.ELEMENT_NODE) {
     let selector = current.tagName.toLowerCase();
 
-    // Try to find a stable anchor point
-    if (current.id && isStableId(current.id)) {
-      path.unshift(`#${CSS.escape(current.id)}`);
-      break;
-    }
+    // NEVER use IDs - they're too unstable
 
-    // Use data attributes if available
+    // Try data attributes
     const dataAttr = generateDataAttributeSelector(current);
     if (dataAttr) {
       path.unshift(dataAttr);
@@ -331,21 +623,15 @@ function generateRobustPath(el) {
       selector += `.${stableClasses[0]}`;
     }
 
-    // Add nth-of-type only if necessary
-    let sibling = current;
-    let nth = 1;
-    while (sibling = sibling.previousElementSibling) {
-      if (sibling.tagName.toLowerCase() === current.tagName.toLowerCase()) nth++;
-    }
-
-    // Check if there are siblings with same tag
+    // Add nth-of-type if needed for disambiguation
     const parent = current.parentElement;
     if (parent) {
-      const sameTagSiblings = Array.from(parent.children).filter(
-        child => child.tagName.toLowerCase() === current.tagName.toLowerCase()
+      const siblings = Array.from(parent.children).filter(
+        child => child.tagName === current.tagName
       );
-      if (sameTagSiblings.length > 1) {
-        selector += `:nth-of-type(${nth})`;
+      if (siblings.length > 1) {
+        const index = siblings.indexOf(current) + 1;
+        selector += `:nth-of-type(${index})`;
       }
     }
 
@@ -361,25 +647,43 @@ function generateRobustPath(el) {
   return path.join(' > ');
 }
 
-function isStableId(id) {
-  // Check if ID looks stable (not dynamically generated)
-  if (!id) return false;
+function generateXPath(el) {
+  // Never use IDs in XPath
+  const parts = [];
+  let current = el;
 
-  // Too long with numbers = likely dynamic
-  if (id.length > 20 && /\d/.test(id)) return false;
+  while (current && current.nodeType === Node.ELEMENT_NODE) {
+    let count = 1;
+    let sibling = current.previousSibling;
 
-  // Known dynamic patterns
-  const dynamicPatterns = [
-    /^(ember|react|vue|angular)\d+/i,
-    /^[a-z0-9]{20,}$/i, // Long random strings
-    /\d{10,}/, // Timestamps
-    /^CardInstance/,
-    /^uid-/,
-    /^id-\d+/,
-    /-\d{5,}$/
-  ];
+    while (sibling) {
+      if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === current.nodeName) {
+        count++;
+      }
+      sibling = sibling.previousSibling;
+    }
 
-  return !dynamicPatterns.some(pattern => pattern.test(id));
+    const tagName = current.nodeName.toLowerCase();
+    const index = count > 1 || hasFollowingSiblingWithSameTag(current) ? `[${count}]` : '';
+    parts.unshift(`${tagName}${index}`);
+
+    current = current.parentNode;
+
+    if (current?.nodeName === 'BODY') break;
+  }
+
+  return '/' + parts.join('/');
+}
+
+function hasFollowingSiblingWithSameTag(el) {
+  let sibling = el.nextSibling;
+  while (sibling) {
+    if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === el.nodeName) {
+      return true;
+    }
+    sibling = sibling.nextSibling;
+  }
+  return false;
 }
 
 function isUnique(selector) {
@@ -390,40 +694,314 @@ function isUnique(selector) {
   }
 }
 
-function generateXPath(el) {
-  if (el.id && isStableId(el.id)) {
-    return `//*[@id="${el.id}"]`;
+// ============================================================================
+// PATTERN DETECTION
+// ============================================================================
+
+function detectRepeatingPattern(element) {
+  const parent = element.parentElement;
+  if (!parent) {
+    return { isRepeating: false, count: 1, similarElements: [] };
   }
 
-  const parts = [];
-  while (el && el.nodeType === Node.ELEMENT_NODE) {
-    let nb = 0;
-    let hasSameTagSibling = false;
-    let sibling = el.previousSibling;
+  const siblings = Array.from(parent.children).filter(
+    child => child.tagName === element.tagName
+  );
 
-    while (sibling) {
-      if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === el.nodeName) {
-        nb++;
-        hasSameTagSibling = true;
-      }
-      sibling = sibling.previousSibling;
+  console.log(`[Pattern Detection] Tag: ${element.tagName}, Siblings with same tag: ${siblings.length}`);
+
+  if (siblings.length < 2) {
+    console.log('[Pattern Detection] Not enough siblings');
+    return { isRepeating: false, count: 1, similarElements: [] };
+  }
+
+  const similarElements = siblings.filter(sibling => {
+    const similar = areElementsSimilar(element, sibling);
+    if (!similar && sibling !== element) {
+      console.log('[Pattern Detection] Sibling NOT similar:', sibling);
     }
+    return similar;
+  });
 
-    if (!hasSameTagSibling) {
-      sibling = el.nextSibling;
-      while (sibling) {
-        if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === el.nodeName) {
-          hasSameTagSibling = true;
-          break;
+  console.log(`[Pattern Detection] Similar elements: ${similarElements.length} / ${siblings.length}`);
+
+  const isRepeating = similarElements.length >= 2;
+
+  return {
+    isRepeating,
+    count: similarElements.length,
+    totalSiblings: siblings.length,
+    similarElements,
+    parentTag: parent.tagName
+  };
+}
+
+function areElementsSimilar(el1, el2) {
+  if (el1 === el2) return true;
+  if (el1.tagName !== el2.tagName) return false;
+
+  // Compare class names
+  const classes1 = (el1.className || '').split(/\s+/).filter(c => c && !c.startsWith('ac-'));
+  const classes2 = (el2.className || '').split(/\s+/).filter(c => c && !c.startsWith('ac-'));
+  const commonClasses = classes1.filter(c => classes2.includes(c));
+  const classSimiliarity = commonClasses.length / Math.max(classes1.length, classes2.length, 1);
+
+  // Compare child structure
+  const children1 = Array.from(el1.children).map(c => c.tagName);
+  const children2 = Array.from(el2.children).map(c => c.tagName);
+  const childrenMatch = children1.length === children2.length &&
+    children1.every((tag, i) => tag === children2[i]);
+
+  const similar = classSimiliarity > 0.5 || childrenMatch;
+
+  if (!similar) {
+    console.log(`[Similarity Check] FAILED - classSimiliarity: ${classSimiliarity.toFixed(2)}, childrenMatch: ${childrenMatch}`);
+    console.log(`  Classes1 (${classes1.length}):`, classes1.slice(0, 3));
+    console.log(`  Classes2 (${classes2.length}):`, classes2.slice(0, 3));
+    console.log(`  Children1 (${children1.length}):`, children1);
+    console.log(`  Children2 (${children2.length}):`, children2);
+  }
+
+  return similar;
+}
+
+// ============================================================================
+// CLIENT-SIDE TESTING
+// ============================================================================
+
+function testSelectorOnPage(selector, containerSelector = null) {
+  try {
+    let matches = [];
+
+    if (containerSelector) {
+      // Test within each container
+      const containers = document.querySelectorAll(containerSelector);
+      containers.forEach(container => {
+        // Handle both CSS and XPath
+        if (selector.startsWith('/') || selector.startsWith('./')) {
+          const result = document.evaluate(
+            selector,
+            container,
+            null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+            null
+          );
+          for (let i = 0; i < result.snapshotLength; i++) {
+            matches.push(result.snapshotItem(i));
+          }
+        } else {
+          const found = container.querySelectorAll(selector);
+          matches.push(...found);
         }
-        sibling = sibling.nextSibling;
+      });
+    } else {
+      // Test on entire page
+      if (selector.startsWith('/') || selector.startsWith('./')) {
+        const result = document.evaluate(
+          selector,
+          document,
+          null,
+          XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+          null
+        );
+        for (let i = 0; i < result.snapshotLength; i++) {
+          matches.push(result.snapshotItem(i));
+        }
+      } else {
+        matches = Array.from(document.querySelectorAll(selector));
       }
     }
 
-    const tagName = el.nodeName.toLowerCase();
-    const index = hasSameTagSibling ? `[${nb + 1}]` : '';
-    parts.unshift(`${tagName}${index}`);
-    el = el.parentNode;
+    // Extract text/content from matches
+    const extractedData = matches.map(el => {
+      const text = (el.innerText || el.textContent || '').trim();
+      const href = el.getAttribute?.('href');
+      return {
+        text: text.substring(0, 100),
+        href: href,
+        tag: el.tagName
+      };
+    });
+
+    return {
+      valid: true,
+      count: matches.length,
+      matches: extractedData
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      count: 0,
+      error: error.message,
+      matches: []
+    };
   }
-  return parts.length ? '/' + parts.join('/') : null;
+}
+
+function previewDataExtraction(fields, containerSelector) {
+  try {
+    const containers = containerSelector
+      ? Array.from(document.querySelectorAll(containerSelector))
+      : [document];
+
+    const results = [];
+
+    containers.slice(0, 3).forEach((container, idx) => { // Preview first 3 containers
+      const item = { _containerIndex: idx };
+
+      for (const [fieldName, selector] of Object.entries(fields)) {
+        try {
+          let matches = [];
+
+          if (selector.startsWith('/') || selector.startsWith('./')) {
+            const result = document.evaluate(
+              selector,
+              container,
+              null,
+              XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+              null
+            );
+            for (let i = 0; i < result.snapshotLength; i++) {
+              matches.push(result.snapshotItem(i));
+            }
+          } else {
+            matches = Array.from(container.querySelectorAll(selector));
+          }
+
+          if (matches.length > 0) {
+            const texts = matches.map(el =>
+              (el.innerText || el.textContent || '').trim()
+            ).filter(t => t);
+            item[fieldName] = texts.join(' ');
+          } else {
+            item[fieldName] = null;
+          }
+        } catch (error) {
+          item[fieldName] = `ERROR: ${error.message}`;
+        }
+      }
+
+      results.push(item);
+    });
+
+    return {
+      success: true,
+      preview: results,
+      totalContainers: containers.length
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// ============================================================================
+// UI HELPERS
+// ============================================================================
+
+function removeHighlight() {
+  if (hoveredElement) {
+    hoveredElement.classList.remove("ac-selector-highlight");
+    hoveredElement = null;
+  }
+}
+
+function clearAllHighlights() {
+  document.querySelectorAll('.ac-selector-highlight, .ac-selector-selected, .ac-container-highlight, .ac-pattern-highlight').forEach(el => {
+    el.classList.remove('ac-selector-highlight', 'ac-selector-selected', 'ac-container-highlight', 'ac-pattern-highlight');
+  });
+}
+
+function visualizePattern(elements, duration = 2000) {
+  elements.forEach(el => {
+    el.classList.add('ac-pattern-highlight');
+  });
+
+  setTimeout(() => {
+    elements.forEach(el => {
+      el.classList.remove('ac-pattern-highlight');
+    });
+  }, duration);
+}
+
+function showToast(message, type = "info") {
+  let toast = document.getElementById("ac-selector-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "ac-selector-toast";
+    document.body.appendChild(toast);
+  }
+
+  // Set style based on type
+  const colors = {
+    success: { bg: '#10b981', text: '#fff' },
+    warning: { bg: '#f59e0b', text: '#fff' },
+    error: { bg: '#ef4444', text: '#fff' },
+    info: { bg: '#3b82f6', text: '#fff' }
+  };
+
+  const color = colors[type] || colors.info;
+
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: ${color.bg};
+    color: ${color.text};
+    padding: 12px 20px;
+    border-radius: 6px;
+    z-index: 10000;
+    font-family: sans-serif;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transition: opacity 0.3s;
+    max-width: 300px;
+  `;
+
+  toast.textContent = message;
+  toast.style.opacity = "1";
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+  }, 3000);
+}
+
+function showHoverTooltip(element) {
+  let tooltip = document.getElementById("ac-hover-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "ac-hover-tooltip";
+    tooltip.style.cssText = `
+      position: fixed;
+      background: rgba(0, 0, 0, 0.9);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: monospace;
+      z-index: 10001;
+      pointer-events: none;
+      white-space: nowrap;
+    `;
+    document.body.appendChild(tooltip);
+  }
+
+  const rect = element.getBoundingClientRect();
+  const tag = element.tagName.toLowerCase();
+  const classes = getStableClasses(element).slice(0, 2).join('.');
+  const text = (element.innerText || element.textContent || '').substring(0, 30);
+
+  tooltip.textContent = `${tag}${classes ? '.' + classes : ''} ${text ? '| ' + text : ''}`;
+  tooltip.style.top = `${rect.top - 30}px`;
+  tooltip.style.left = `${rect.left}px`;
+  tooltip.style.display = 'block';
+}
+
+function hideHoverTooltip() {
+  const tooltip = document.getElementById("ac-hover-tooltip");
+  if (tooltip) {
+    tooltip.style.display = 'none';
+  }
 }

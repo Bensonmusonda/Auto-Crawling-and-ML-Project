@@ -1,161 +1,767 @@
 <!DOCTYPE html>
 <html>
-
 <head>
+  <meta charset="UTF-8">
   <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
-      width: 380px;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      padding: 12px;
-      color: #333;
-      max-height: 600px;
+      width: 500px;
+      max-height: 700px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a1a;
+      background: #f5f5f5;
       overflow-y: auto;
     }
 
-    h2 {
-      margin-top: 0;
-      font-size: 16px;
-      border-bottom: 2px solid #007bff;
-      padding-bottom: 8px;
-      color: #007bff;
+    /* Header */
+    .header {
+      background: #2a2a2a;
+      color: white;
+      padding: 16px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 2px solid #404040;
     }
 
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .header .subtitle {
+      font-size: 11px;
+      opacity: 0.7;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+
+    /* Container */
+    .container {
+      padding: 16px;
+    }
+
+    /* Wizard Steps */
+    .wizard-nav {
+      display: flex;
+      background: white;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      gap: 4px;
+    }
+
+    .wizard-step {
+      flex: 1;
+      padding: 8px;
+      border-radius: 4px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #f5f5f5;
+      color: #666;
+      border: 1px solid #e0e0e0;
+    }
+
+    .wizard-step.active {
+      background: #2a2a2a;
+      color: white;
+      border-color: #2a2a2a;
+    }
+
+    .wizard-step.completed {
+      background: #f0f0f0;
+      color: #2a2a2a;
+      border-color: #d0d0d0;
+    }
+
+    .wizard-step .step-number {
+      display: block;
+      font-size: 10px;
+      opacity: 0.7;
+      margin-bottom: 2px;
+    }
+
+    /* Section Card */
+    .section {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid #e0e0e0;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .section-description {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    /* Buttons */
     .btn {
+      display: inline-block;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .btn-block {
       display: block;
       width: 100%;
-      padding: 10px;
-      margin: 8px 0;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 14px;
-      transition: background 0.2s;
     }
 
-    .btn:hover {
-      background: #0056b3;
+    .btn-primary {
+      background: #2a2a2a;
+      color: white;
+      border: 1px solid #2a2a2a;
+    }
+
+    .btn-primary:hover {
+      background: #1a1a1a;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .btn-primary:active {
+      background: #2a2a2a;
     }
 
     .btn-secondary {
-      background: #6c757d;
+      background: white;
+      color: #2a2a2a;
+      border: 1px solid #d0d0d0;
     }
 
     .btn-secondary:hover {
-      background: #545b62;
+      background: #f5f5f5;
+      border-color: #2a2a2a;
     }
 
     .btn-success {
-      background: #28a745;
-      display: none;
+      background: #10b981;
+      color: white;
+      border: 1px solid #10b981;
+    }
+
+    .btn-success:hover {
+      background: #059669;
     }
 
     .btn-danger {
-      background: #dc3545;
+      background: #ef4444;
+      color: white;
+      border: 1px solid #ef4444;
     }
 
-    .result-box {
-      background: #f8f9fa;
-      border: 1px solid #dee2e6;
-      padding: 12px;
-      border-radius: 6px;
-      margin-top: 12px;
-      font-size: 13px;
-      display: none;
+    .btn-danger:hover {
+      background: #dc2626;
     }
 
-    .label {
-      font-weight: bold;
-      display: block;
-      margin-bottom: 4px;
-      color: #495057;
+    .btn-sm {
+      padding: 6px 12px;
       font-size: 11px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Input Fields */
+    .input-group {
+      margin-bottom: 12px;
+    }
+
+    .input-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 6px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
 
-    code {
-      display: block;
-      background: #fff;
-      padding: 6px 8px;
-      border: 1px solid #dee2e6;
-      border-radius: 3px;
-      word-break: break-all;
-      font-family: 'Courier New', monospace;
-      color: #e83e8c;
-      font-size: 11px;
-      line-height: 1.4;
+    .input-field {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 13px;
+      transition: all 0.2s;
+      font-family: inherit;
     }
 
-    #status {
-      margin-top: 10px;
-      font-size: 12px;
-      min-height: 18px;
+    .input-field:focus {
+      outline: none;
+      border-color: #2a2a2a;
+      box-shadow: 0 0 0 3px rgba(42, 42, 42, 0.1);
+    }
+
+    .input-hint {
+      font-size: 10px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    /* Info Box */
+    .info-box {
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin: 8px 0;
+      border-left: 3px solid;
+    }
+
+    .info-box.info {
+      background: #f0f9ff;
+      border-color: #3b82f6;
+      color: #1e3a8a;
+    }
+
+    .info-box.success {
+      background: #f0fdf4;
+      border-color: #10b981;
+      color: #065f46;
+    }
+
+    .info-box.warning {
+      background: #fffbeb;
+      border-color: #f59e0b;
+      color: #92400e;
+    }
+
+    .info-box.error {
+      background: #fef2f2;
+      border-color: #ef4444;
+      color: #991b1b;
+    }
+
+    /* Status Badge */
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.active {
+      background: #10b981;
+      color: white;
+    }
+
+    .status-badge.inactive {
+      background: #d0d0d0;
       color: #666;
-      padding: 6px;
+    }
+
+    /* Field List */
+    .field-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field-item {
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .field-item:hover {
+      border-color: #2a2a2a;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .field-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .field-name {
+      font-weight: 600;
+      font-size: 12px;
+      color: #1a1a1a;
+    }
+
+    .field-selector {
+      font-size: 10px;
+      color: #666;
+      font-family: 'Courier New', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+
+    .field-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .icon-btn {
+      background: none;
+      border: 1px solid #d0d0d0;
+      cursor: pointer;
+      padding: 4px 8px;
       border-radius: 3px;
+      font-size: 11px;
+      transition: all 0.2s;
+      color: #666;
+    }
+
+    .icon-btn:hover {
+      background: #2a2a2a;
+      border-color: #2a2a2a;
+      color: white;
+    }
+
+    /* Selector Options */
+    .selector-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .selector-option {
+      background: #fafafa;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .selector-option:hover {
+      border-color: #2a2a2a;
+      background: #f5f5f5;
+    }
+
+    .selector-option.selected {
+      border-color: #2a2a2a;
+      background: #e8e8e8;
+    }
+
+    .selector-option input[type="radio"] {
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .selector-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .selector-name {
+      font-weight: 600;
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .selector-text {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: #1a1a1a;
+      word-break: break-all;
+    }
+
+    .selector-option .editable-selector {
+      width: 100%;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 4px 6px;
+      border: 1px solid #d0d0d0;
+      border-radius: 3px;
+      margin-top: 4px;
+    }
+
+    .match-count {
+      flex-shrink: 0;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .match-count.unique {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .match-count.multiple {
+      background: #dbeafe;
+      color: #1e3a8a;
+    }
+
+    .match-count.none {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    /* Data Preview Table */
+    .preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-top: 8px;
+    }
+
+    .preview-table th {
+      background: #2a2a2a;
+      color: white;
+      padding: 6px 8px;
+      text-align: left;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 10px;
+    }
+
+    .preview-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #e0e0e0;
+      color: #1a1a1a;
+    }
+
+    .preview-table tr:hover td {
+      background: #f5f5f5;
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 32px 20px;
+      color: #999;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    .empty-state-text {
+      font-size: 12px;
+      color: #666;
+    }
+
+    /* Status Message */
+    .status-message {
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin: 12px 0;
+      display: none;
+      animation: slideDown 0.3s ease;
+    }
+
+    .status-message.show {
+      display: block;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Utility Classes */
+    .hidden {
+      display: none !important;
+    }
+
+    .text-center {
+      text-align: center;
+    }
+
+    .mt-1 { margin-top: 8px; }
+    .mb-1 { margin-bottom: 8px; }
+    .mt-2 { margin-top: 16px; }
+    .mb-2 { margin-bottom: 16px; }
+
+    /* Configuration Summary */
+    .config-summary {
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-size: 11px;
+    }
+
+    .config-summary .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    .config-summary .label {
+      color: #666;
       font-weight: 500;
     }
 
-    #alternatives {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #dee2e6;
-    }
-
-    #debugInfo {
-      margin-top: 12px;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 12px;
-      font-size: 10px;
-      color: white;
-      margin-left: auto;
+    .config-summary .value {
+      color: #1a1a1a;
       font-weight: 600;
-    }
-
-    .section-divider {
-      margin: 12px 0;
-      border-top: 1px dashed #dee2e6;
+      font-family: monospace;
     }
   </style>
 </head>
-
 <body>
-  <h2>🎯 Auto-Crawler Selector Picker</h2>
-
-  <button id="togglePicker" class="btn">Start Picking</button>
-
-  <div id="selectionResult" class="result-box">
-    <span class="label">Primary CSS Selector:</span>
-    <code id="cssSelector"></code>
-
-    <span class="label" style="margin-top: 10px;">XPath:</span>
-    <code id="xpathSelector"></code>
-
-    <span class="label" style="margin-top: 10px;">Matched Text:</span>
-    <div id="textPreview" style="font-size: 11px; color: #495057; font-style: italic; padding: 4px 0;"></div>
-
-    <div id="alternatives"></div>
+  <div class="header">
+    <h1>Web Scraper Configuration Tool</h1>
+    <div class="subtitle" id="currentUrl">No page loaded</div>
   </div>
 
-  <div id="actions" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 2px solid #dee2e6;">
-    <button id="validateBtn" class="btn btn-secondary">🔍 Validate Selector (Server)</button>
-    <button id="exportBtn" class="btn btn-success">✓ Use This Selector</button>
-    <button id="clearBtn" class="btn btn-secondary" style="background: #dc3545; margin-top: 8px;">🗑️ Clear All
-      Results</button>
+  <div class="container">
+    <!-- Wizard Navigation -->
+    <div class="wizard-nav">
+      <div class="wizard-step active" data-step="setup">
+        <span class="step-number">01</span>
+        <span>Setup</span>
+      </div>
+      <div class="wizard-step" data-step="container">
+        <span class="step-number">02</span>
+        <span>Container</span>
+      </div>
+      <div class="wizard-step" data-step="fields">
+        <span class="step-number">03</span>
+        <span>Fields</span>
+      </div>
+      <div class="wizard-step" data-step="advanced">
+        <span class="step-number">04</span>
+        <span>Advanced</span>
+      </div>
+      <div class="wizard-step" data-step="export">
+        <span class="step-number">05</span>
+        <span>Export</span>
+      </div>
+    </div>
+
+    <!-- Status Message -->
+    <div id="statusMessage" class="status-message"></div>
+
+    <!-- Step 1: Setup -->
+    <div id="step-setup" class="wizard-content">
+      <div class="section">
+        <div class="section-title">Configuration Setup</div>
+        <div class="input-group">
+          <label class="input-label" for="datasetName">Dataset Name</label>
+          <input type="text" id="datasetName" class="input-field" placeholder="my_dataset">
+          <div class="input-hint">Used to identify this scraping job</div>
+        </div>
+        
+        <div class="config-summary mt-2">
+          <div class="row">
+            <span class="label">Target URL:</span>
+            <span class="value" id="summaryUrl">-</span>
+          </div>
+          <div class="row">
+            <span class="label">Crawl Mode:</span>
+            <span class="value" id="crawlMode">flat</span>
+          </div>
+          <div class="row">
+            <span class="label">Fields Configured:</span>
+            <span class="value" id="fieldCount">0</span>
+          </div>
+        </div>
+
+        <button id="btnNextToContainer" class="btn btn-primary btn-block mt-2">Continue to Container Setup</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Container Selection -->
+    <div id="step-container" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Container Selection (Optional)</div>
+        <div class="section-description">
+          If your target data repeats in a list (e.g., product cards, article listings), select one item to define the container. Skip this step if scraping a single page with unique fields.
+        </div>
+
+        <div id="containerStatus" class="info-box info hidden">
+          <strong>Container:</strong> <code id="containerSelectorDisplay">None</code><br>
+          <strong>Items found:</strong> <span id="containerCountDisplay">0</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickContainer" class="btn btn-primary">Pick Container Element</button>
+          <button id="btnClearContainer" class="btn btn-secondary">Clear</button>
+        </div>
+
+        <div class="btn-group mt-2">
+          <button id="btnSkipContainer" class="btn btn-secondary">Skip</button>
+          <button id="btnNextToFields" class="btn btn-primary">Continue to Fields</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Field Selection -->
+    <div id="step-fields" class="wizard-content hidden">
+      <!-- Active Selection Panel -->
+      <div id="fieldSelectionPanel" class="section hidden">
+        <div class="section-title">Configure Field</div>
+        
+        <div class="input-group">
+          <label class="input-label" for="fieldNameInput">Field Name</label>
+          <input type="text" id="fieldNameInput" class="input-field" placeholder="e.g., title, price, description">
+          <div class="input-hint">Use lowercase letters, numbers, and underscores only</div>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Extracted Text Preview</label>
+          <div id="textPreview" style="font-size: 11px; color: #666; padding: 8px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; font-style: italic; min-height: 40px;">
+            No text extracted
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Choose Selector</label>
+          <div id="selectorOptions" class="selector-options">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnAddField" class="btn btn-success">Add Field</button>
+          <button id="btnCancelField" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Field Management Section -->
+      <div class="section">
+        <div class="section-title">Configured Fields</div>
+        
+        <div id="fieldList" class="field-list">
+          <div id="emptyFieldsState" class="empty-state">
+            <div class="empty-state-icon">□</div>
+            <div class="empty-state-text">No fields configured yet</div>
+          </div>
+        </div>
+
+        <button id="btnPickField" class="btn btn-primary btn-block mt-2">Pick Field Element</button>
+        
+        <div class="btn-group mt-2">
+          <button id="btnBackToContainer" class="btn btn-secondary">Back</button>
+          <button id="btnPreviewData" class="btn btn-secondary">Preview Data</button>
+          <button id="btnNextToAdvanced" class="btn btn-primary">Continue</button>
+        </div>
+      </div>
+
+      <!-- Data Preview Modal -->
+      <div id="dataPreviewSection" class="section hidden">
+        <div class="section-title">Data Preview</div>
+        <div id="dataPreviewContent"></div>
+        <button id="btnClosePreview" class="btn btn-secondary btn-sm mt-1">Close Preview</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Advanced Options -->
+    <div id="step-advanced" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Pagination</div>
+        <div class="section-description">
+          Configure pagination to crawl multiple pages automatically.
+        </div>
+
+        <div id="paginationStatus" class="info-box info hidden">
+          <strong>Selector:</strong> <code id="paginationSelectorDisplay">None</code><br>
+          <strong>Max Pages:</strong> <span id="maxPagesDisplay">5</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickPagination" class="btn btn-primary">Pick Next Button</button>
+          <button id="btnClearPagination" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">List-Detail Mode</div>
+        <div class="section-description">
+          Enable this if you need to click into detail pages (e.g., product pages from a listing).
+        </div>
+
+        <div id="linkStatus" class="info-box info hidden">
+          <strong>Link Selector:</strong> <code id="linkSelectorDisplay">None</code><br>
+          <strong>Links found:</strong> <span id="linkCountDisplay">0</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickLink" class="btn btn-primary">Pick Detail Link</button>
+          <button id="btnClearLink" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+
+      <div class="btn-group mt-2">
+        <button id="btnBackToFields" class="btn btn-secondary">Back</button>
+        <button id="btnNextToExport" class="btn btn-primary">Continue to Export</button>
+      </div>
+    </div>
+
+    <!-- Step 5: Export -->
+    <div id="step-export" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Configuration Summary</div>
+        <div id="exportSummary" class="config-summary">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Actions</div>
+        <button id="btnTestAll" class="btn btn-secondary btn-block">Test All Selectors</button>
+        <button id="btnExport" class="btn btn-primary btn-block mt-1">Export Configuration</button>
+        <button id="btnClearAll" class="btn btn-danger btn-block mt-1">Clear All</button>
+      </div>
+
+      <button id="btnBackToAdvanced" class="btn btn-secondary btn-block mt-2">Back</button>
+    </div>
   </div>
 
-  <div id="debugInfo"></div>
-
-  <div id="status"></div>
-
+  <script src="config-manager.js"></script>
   <script src="popup.js"></script>
 </body>
-
 </html>

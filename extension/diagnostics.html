@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Extension Diagnostics</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #00ff00;
+    }
+    .section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #2a2a2a;
+      border: 1px solid #00ff00;
+    }
+    button {
+      padding: 10px 20px;
+      background: #00ff00;
+      color: #1a1a1a;
+      border: none;
+      cursor: pointer;
+      margin: 5px;
+    }
+    .log {
+      background: #000;
+      padding: 10px;
+      margin: 10px 0;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔧 Extension Diagnostics</h1>
+  
+  <div class="section">
+    <h2>Step 1: Check Content Script Version</h2>
+    <button onclick="checkVersion()">Check Version</button>
+    <div id="versionResult" class="log"></div>
+  </div>
+
+  <div class="section">
+    <h2>Step 2: Test Container Selection</h2>
+    <p>Click a book below after enabling "Pick Container" mode</p>
+    <ol class="row" style="list-style: none; padding: 0;">
+      <li class="col-xs-6" style="background: #333; padding: 10px; margin: 5px;">Book 1</li>
+      <li class="col-xs-6" style="background: #333; padding: 10px; margin: 5px;">Book 2</li>
+      <li class="col-xs-6" style="background: #333; padding: 10px; margin: 5px;">Book 3</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>Step 3: Message Log</h2>
+    <button onclick="startListening()">Start Listening for Messages</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <div id="messageLog" class="log"></div>
+  </div>
+
+  <div class="section">
+    <h2>Step 4: Manual Test</h2>
+    <button onclick="sendTestMessage()">Send Test Message to Popup</button>
+    <div id="testResult" class="log"></div>
+  </div>
+
+  <script>
+    let messageCount = 0;
+
+    function checkVersion() {
+      const result = document.getElementById('versionResult');
+      if (typeof CONTENT_SCRIPT_VERSION !== 'undefined') {
+        result.innerHTML = `
+          ✅ Content script loaded!<br>
+          Version: ${CONTENT_SCRIPT_VERSION}<br>
+          Timestamp: ${LOAD_TIMESTAMP}<br>
+          generateContainerSelector: ${typeof generateContainerSelector}
+        `;
+      } else {
+        result.innerHTML = `❌ Content script NOT loaded or OLD VERSION`;
+      }
+    }
+
+    function startListening() {
+      const log = document.getElementById('messageLog');
+      log.innerHTML = 'Listening for messages...<br>';
+      
+      chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        messageCount++;
+        const timestamp = new Date().toLocaleTimeString();
+        log.innerHTML += `
+          <div style="border-top: 1px solid #00ff00; padding: 5px 0;">
+            [${messageCount}] ${timestamp}<br>
+            Action: ${request.action}<br>
+            Data: ${JSON.stringify(request.data, null, 2)}
+          </div>
+        `;
+        log.scrollTop = log.scrollHeight;
+      });
+    }
+
+    function clearLog() {
+      document.getElementById('messageLog').innerHTML = '';
+      messageCount = 0;
+    }
+
+    function sendTestMessage() {
+      const result = document.getElementById('testResult');
+      result.innerHTML = 'Sending test message...<br>';
+      
+      chrome.runtime.sendMessage({
+        action: "containerSelected",
+        data: {
+          selector: "li.test-selector",
+          count: 99,
+          tagName: "LI",
+          sampleHtml: "<test>This is a test message</test>"
+        }
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          result.innerHTML += `❌ Error: ${chrome.runtime.lastError.message}`;
+        } else {
+          result.innerHTML += `✅ Message sent! Response: ${JSON.stringify(response)}`;
+        }
+      });
+    }
+
+    // Auto-check version on load
+    window.addEventListener('load', () => {
+      setTimeout(checkVersion, 500);
+    });
+  </script>
+</body>
+</html>

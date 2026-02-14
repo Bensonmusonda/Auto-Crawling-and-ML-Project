@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Auto-Crawler Selector Picker",
-  "version": "1.0",
-  "description": "Point and click to generate valid CSS selectors for your crawling project.",
+  "name": "Web Scraper Configuration Tool",
+  "version": "2.1.1",
+  "description": "Point-and-click configuration tool for automated web scraping with Scrapy.",
   "permissions": [
     "activeTab",
     "scripting",
