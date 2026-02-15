@@ -119,7 +119,7 @@ function handleContainerSelection(element) {
   console.log('Container classes:', container.className);
   
   // Use special container selector that matches ALL similar elements (no nth-of-type)
-  const containerSelector = generateContainerSelector(container);
+  const containerSelector = generateContainerSelector(container, patternInfo.similarElements);
   
   console.log('Generated selector:', containerSelector);
   
@@ -454,19 +454,49 @@ function generateAbsoluteSelector(element) {
 }
 
 // Generate selector for containers - matches ALL similar elements (no nth-of-type)
-function generateContainerSelector(element) {
-  // First, try the simplest approach: tag + first stable class
+function generateContainerSelector(element, similarElements = null) {
+  const tag = element.tagName.toLowerCase();
+  
+  // If we have info about similar elements, find shared classes
+  if (similarElements && similarElements.length >= 2) {
+    const sharedClasses = findSharedClasses(similarElements);
+    console.log('[Container Selector] Shared classes among similar elements:', sharedClasses);
+    
+    if (sharedClasses.length > 0) {
+      // Try each shared class to see which gives the right count
+      for (const className of sharedClasses) {
+        const selector = `${tag}.${className}`;
+        const matches = document.querySelectorAll(selector);
+        console.log(`[Container Selector] Trying shared class: ${selector} (${matches.length} matches)`);
+        
+        if (matches.length >= similarElements.length) {
+          return selector;
+        }
+      }
+      
+      // If single class didn't work, try combining first two
+      if (sharedClasses.length >= 2) {
+        const selector = `${tag}.${sharedClasses[0]}.${sharedClasses[1]}`;
+        const matches = document.querySelectorAll(selector);
+        console.log(`[Container Selector] Trying combined classes: ${selector} (${matches.length} matches)`);
+        
+        if (matches.length >= 2) {
+          return selector;
+        }
+      }
+    }
+  }
+  
+  // Fallback to original logic
   const stableClasses = getStableClasses(element);
   
   if (stableClasses.length > 0) {
-    const tag = element.tagName.toLowerCase();
     const simpleSelector = `${tag}.${stableClasses[0]}`;
     const matches = document.querySelectorAll(simpleSelector);
     
     console.log(`Trying simple selector: ${simpleSelector} (${matches.length} matches)`);
     
     if (matches.length >= 2) {
-      // This simple selector works!
       return simpleSelector;
     }
   }
@@ -526,6 +556,24 @@ function generateContainerSelector(element) {
   }
   
   return path.join(' > ');
+}
+
+// Find classes that are shared by all elements in the array
+function findSharedClasses(elements) {
+  if (elements.length === 0) return [];
+  
+  // Get all classes from first element
+  const firstClasses = getStableClasses(elements[0]);
+  
+  // Filter to only classes present in ALL elements
+  const sharedClasses = firstClasses.filter(className => {
+    return elements.every(el => {
+      const elClasses = getStableClasses(el);
+      return elClasses.includes(className);
+    });
+  });
+  
+  return sharedClasses;
 }
 
 // ============================================================================

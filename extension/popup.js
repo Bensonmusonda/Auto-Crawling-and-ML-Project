@@ -84,8 +84,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   await configManager.loadFromStorage();
   
   // Restore wizard step (or default to 'setup' if first time)
-  const stored = await chrome.storage.local.get(['currentStep']);
+  const stored = await chrome.storage.local.get(['currentStep', 'lastSelection', 'selectionType']);
   const startStep = stored.currentStep || 'setup';
+  
+  // Process any pending selection from when popup was closed
+  if (stored.lastSelection && stored.selectionType) {
+    if (stored.selectionType === 'containerSelected') {
+      handleContainerSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'fieldSelected') {
+      handleFieldSelected(stored.lastSelection);
+    }
+    // Clear it so we don't process it again
+    chrome.storage.local.remove(['lastSelection', 'selectionType']);
+  }
   
   // Get current tab URL
   const tab = await getCurrentTab();
