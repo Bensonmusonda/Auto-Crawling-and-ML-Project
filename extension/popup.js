@@ -778,21 +778,106 @@ async function testAllSelectors() {
         selector: selector,
         containerSelector: containerSelector
       }, (result) => {
+        results.push({
+          field: fieldName,
+          selector: selector,
+          passed: result && result.valid && result.count > 0,
+          count: result?.count || 0,
+          error: result?.error,
+          samples: result?.matches?.slice(0, 3) || []
+        });
         if (result && result.valid && result.count > 0) {
           passedCount++;
-          results.push(`✓ ${fieldName}: ${result.count}`);
-        } else {
-          results.push(`✗ ${fieldName}: 0`);
         }
         resolve();
       });
     });
   }
   
-  const status = passedCount === fieldKeys.length ? 'success' : 'warning';
-  showStatus(`Test complete: ${passedCount}/${fieldKeys.length} passed`, status);
+  // Show results in modal
+  showTestResultsModal(results, passedCount, fieldKeys.length);
+}
+
+function showTestResultsModal(results, passedCount, totalCount) {
+  // Create modal
+  let modal = document.getElementById('test-results-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'test-results-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+    document.body.appendChild(modal);
+  }
   
-  console.log('Test results:', results);
+  const status = passedCount === totalCount ? 'PASSED' : 'FAILED';
+  const statusColor = passedCount === totalCount ? '#10b981' : '#f59e0b';
+  
+  modal.innerHTML = `
+    <div style="
+      background: white;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    ">
+      <div style="padding: 16px; border-bottom: 1px solid #e5e7eb;">
+        <h3 style="margin: 0; font-size: 16px; color: #1f2937;">Test Results</h3>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: ${statusColor}; font-weight: 600;">
+          ${status}: ${passedCount}/${totalCount} fields
+        </p>
+      </div>
+      
+      <div style="overflow-y: auto; padding: 16px;">
+        ${results.map(r => `
+          <div style="
+            margin-bottom: 12px;
+            padding: 12px;
+            background: ${r.passed ? '#f0fdf4' : '#fef2f2'};
+            border-left: 3px solid ${r.passed ? '#10b981' : '#ef4444'};
+            border-radius: 4px;
+          ">
+            <div style="font-weight: 600; font-size: 13px; color: #1f2937; margin-bottom: 4px;">
+              ${r.passed ? '✓' : '✗'} ${r.field}
+            </div>
+            <div style="font-size: 11px; color: #6b7280; font-family: monospace; margin-bottom: 4px;">
+              ${r.selector}
+            </div>
+            <div style="font-size: 12px; color: ${r.passed ? '#059669' : '#dc2626'};">
+              ${r.passed ? `${r.count} matches found` : r.error || '0 matches'}
+            </div>
+            ${r.samples.length > 0 ? `
+              <div style="margin-top: 8px; font-size: 11px; color: #6b7280;">
+                <strong>Samples:</strong>
+                ${r.samples.map(s => `<div style="margin-top: 4px; padding: 4px; background: white; border-radius: 2px;">${s.text || s.tag}</div>`).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `).join('')}
+      </div>
+      
+      <div style="padding: 16px; border-top: 1px solid #e5e7eb; text-align: right;">
+        <button onclick="document.getElementById('test-results-modal').remove()" style="
+          padding: 8px 16px;
+          background: #2a2a2a;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 13px;
+        ">Close</button>
+      </div>
+    </div>
+  `;
 }
 
 function exportConfiguration() {
