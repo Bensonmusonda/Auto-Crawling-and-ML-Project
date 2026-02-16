@@ -36,10 +36,25 @@ class UniversalSpider(scrapy.Spider):
         self.pages_crawled += 1
         self.emit_progress()
 
+        # Debug: inspect the response
+        self.logger.info(f"=== RESPONSE DEBUG ===")
+        self.logger.info(f"URL: {response.url}")
+        self.logger.info(f"Status: {response.status}")
+        self.logger.info(f"Body length: {len(response.body)}")
+        self.logger.info(f"First 500 chars: {response.text[:500]}")
+        self.logger.info(f"======================")
+
+        self.logger.info(f"=== PARSE DEBUG: crawl_type={self.crawl_type}, container_selector={self.container_selector}")
+        
         if self.crawl_type == "flat":
             if self.container_selector:
-                for container in response.css(self.container_selector):
-                    yield self.extract_item(container, response.url)
+                containers = response.css(self.container_selector)
+                self.logger.info(f"=== Found {len(containers)} containers using selector '{self.container_selector}'")
+                for idx, container in enumerate(containers):
+                    item = self.extract_item(container, response.url)
+                    self.logger.debug(f"=== Extracted item {idx+1}: {item}")
+                    self.items_scraped += 1
+                    yield item
             else:
                 yield self.extract_item(response, response.url)
 

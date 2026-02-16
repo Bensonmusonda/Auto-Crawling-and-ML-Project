@@ -68,6 +68,7 @@ const elements = {
   exportSummary: document.getElementById('exportSummary'),
   btnTestAll: document.getElementById('btnTestAll'),
   btnExport: document.getElementById('btnExport'),
+  btnStartCrawl: document.getElementById('btnStartCrawl'),
   btnClearAll: document.getElementById('btnClearAll'),
   btnBackToAdvanced: document.getElementById('btnBackToAdvanced'),
   
@@ -160,6 +161,7 @@ function setupEventListeners() {
   // Export step
   elements.btnTestAll.addEventListener('click', testAllSelectors);
   elements.btnExport.addEventListener('click', exportConfiguration);
+  elements.btnStartCrawl.addEventListener('click', startCrawl);
   elements.btnClearAll.addEventListener('click', clearAll);
   elements.btnBackToAdvanced.addEventListener('click', () => navigateToStep('advanced'));
   
@@ -894,6 +896,35 @@ function exportConfiguration() {
     });
   } catch (error) {
     showStatus(error.message, 'error');
+  }
+}
+
+async function startCrawl() {
+  try {
+    const config = configManager.exportConfig();
+    
+    showStatus('Sending crawl request...', 'info');
+    
+    const response = await fetch('http://localhost:8000/api/crawl', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    
+    showStatus(`✓ Crawl started! Job ID: ${result['started crawl job']}`, 'success');
+    console.log('Crawl job:', result);
+    
+  } catch (error) {
+    showStatus(`Failed to start crawl: ${error.message}`, 'error');
+    console.error('Crawl error:', error);
   }
 }
 

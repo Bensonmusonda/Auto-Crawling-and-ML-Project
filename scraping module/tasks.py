@@ -51,22 +51,31 @@ def run_crawl_task(self, config_input):
         'crawler.crawler.pipelines.PostgresPipeline': 300,
     }, priority='cmdline')
 
-    settings.set('ROBOTSTXT_OBEY', True)
+    settings.set('ROBOTSTXT_OBEY', False)
     settings.set('DOWNLOAD_DELAY', 1) 
     settings.set('AUTOTHROTTLE_ENABLED', True) 
     settings.set('CONCURRENT_REQUESTS', 4)
     settings.set('SCHEDULER_DISK_QUEUE', 'scrapy.squeues.PickleFifoDiskQueue')
     
     settings.set('SPIDER_MODULES', ['crawler.crawler.spiders'], priority='cmdline')
-    settings.set('ROBOTSTXT_OBEY', True)
-    settings.set('LOG_LEVEL', 'INFO', priority='cmdline')
+    settings.set('LOG_LEVEL', 'DEBUG', priority='cmdline')
 
     settings.set('TWISTED_REACTOR', 'twisted.internet.asyncioreactor.AsyncioSelectorReactor', priority='cmdline')
 
     try:
         process = CrawlerProcess(settings)
-        process.crawl(UniversalSpider, config=json.dumps(config_dict))
+        # Create crawler instance to access stats later
+        crawler = process.create_crawler(UniversalSpider)
+        process.crawl(crawler, config=json.dumps(config_dict))
         process.start()
+        
+        # Log stats from the crawler instance
+        stats = crawler.stats.get_stats() if crawler.stats else {}
+        print(f"=== CRAWL STATS ===")
+        print(f"Items scraped: {stats.get('item_scraped_count', 0)}")
+        print(f"Pages crawled: {stats.get('response_received_count', 0)}")
+        print(f"Stats: {stats}")
+        print(f"===================")
         
         r.publish('crawl_events', json.dumps({
             "job_id": job_id, 
