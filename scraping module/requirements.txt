@@ -1,12 +1,6 @@
-celery==5.3.6
-redis==5.0.1
-
 scrapy==2.11.0
-twisted==22.10.0
-cryptography
-
-pydantic==2.5.3
-psycopg[binary]
-dotenv
-
-playwright==1.40.0 
+celery==5.3.4
+redis==5.0.1
+psycopg[binary]==3.1.18
+scrapy-playwright==0.0.36
+playwright==1.40.0

@@ -8,15 +8,11 @@ services:
       - scraper_network
 
   worker:
-    # Use official Playwright image instead of custom build
-    image: mcr.microsoft.com/playwright/python:v1.40.0-jammy
+    build:
+      context: ./scraping module
     container_name: scraper_worker
     working_dir: /app
-    command: >
-      bash -c "
-        pip install --no-cache-dir -r requirements.txt &&
-        celery -A tasks worker --loglevel=info
-      "
+    command: celery -A tasks worker --loglevel=info
     depends_on:
       - redis
     extra_hosts:
