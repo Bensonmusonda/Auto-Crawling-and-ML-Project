@@ -1,0 +1,19 @@
+{
+    "crawl": {
+        "enabled": true,
+        "config": { ...CrawlRequest fields... }
+    },
+    "processing": {
+        "enabled": true,
+        "config": { "steps": [...pipeline steps...] }
+    },
+    "ml": {
+        "enabled": true,
+        "config": {
+            "target_column": "price",
+            "model_type": "random_forest",
+            "auto_tune": true,
+            "params": {}
+        }
+    }
+}

@@ -32,6 +32,7 @@ services:
       - "8000:8000"
     depends_on:
       - redis
+      - postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -46,7 +47,6 @@ services:
     container_name: postgres_service
     env_file:
       - .env
-    environment: []
     ports:
       - "5432:5432"
     volumes:

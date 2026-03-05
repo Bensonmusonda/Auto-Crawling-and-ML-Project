@@ -9,6 +9,8 @@ import io
 import psycopg
 from psycopg.rows import dict_row
 from celery import Celery
+import glob
+from datetime import datetime
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -50,6 +52,8 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
 
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+CSV_DATASET_DIR = "/app/datasets"
 
 celery_app = Celery(
     'scraper',
@@ -126,6 +130,75 @@ async def rt_crawl_events(websocket: WebSocket):
     finally:
         pubsub.close()
 
+async def ensure_app_config_table(conn):
+    async with conn.cursor() as cur:
+        await cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_config (
+                key VARCHAR(100) PRIMARY KEY,
+                value JSONB NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        # Seed tough_sites if not present
+        await cur.execute("""
+            INSERT INTO app_config (key, value)
+            VALUES ('tough_sites', '["amazon.com", "ebay.com", "walmart.com"]'::jsonb)
+            ON CONFLICT (key) DO NOTHING;
+        """)
+        await conn.commit()
+
+
+@app.get("/api/crawl/jobs")
+async def get_crawl_jobs():
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT
+                    job_id,
+                    dataset_name,
+                    COUNT(*)              AS item_count,
+                    MIN(created_at)       AS started_at,
+                    MAX(created_at)       AS last_seen_at
+                FROM scraped_items
+                WHERE job_id IS NOT NULL
+                GROUP BY job_id, dataset_name
+                ORDER BY MAX(created_at) DESC
+                LIMIT 100
+            """)
+            return await cur.fetchall()
+
+
+@app.get("/api/crawl/tough-sites")
+async def get_tough_sites():
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        await ensure_app_config_table(conn)
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT value FROM app_config WHERE key = 'tough_sites'")
+            row = await cur.fetchone()
+            return {"tough_sites": row["value"] if row else []}
+
+
+@app.post("/api/crawl/tough-sites")
+async def update_tough_sites(payload: dict):
+    sites = payload.get("tough_sites", [])
+    if not isinstance(sites, list):
+        raise HTTPException(400, "tough_sites must be a list")
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+        await ensure_app_config_table(conn)
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                INSERT INTO app_config (key, value, updated_at)
+                VALUES ('tough_sites', %s::jsonb, NOW())
+                ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value,
+                        updated_at = NOW()
+            """, (json.dumps(sites),))
+            await conn.commit()
+    return {"status": "updated", "tough_sites": sites}
+
+""" 
+CSV Endpoints
+"""
 @app.get("/api/generate/csv")
 async def generate_csv(dataset_name: str):
     connection = None
@@ -166,6 +239,54 @@ async def generate_csv(dataset_name: str):
     finally:
         if connection:
             await connection.close()
+
+@app.post("/api/datasets/save-csv")
+async def save_csv_to_dir(dataset_name: str):
+    os.makedirs(CSV_DATASET_DIR, exist_ok=True)
+    connection = None
+    try:
+        connection = await psycopg.AsyncConnection.connect(
+            conninfo=DATABASE_URL, connect_timeout=10
+        )
+        async with connection.cursor() as cur:
+            await cur.execute(
+                "SELECT data FROM scraped_items WHERE dataset_name = %s;",
+                (dataset_name,)
+            )
+            records = await cur.fetchall()
+
+        if not records:
+            raise HTTPException(status_code=404, detail="Dataset not found or empty")
+
+        rows = [row[0] for row in records]
+        df = pd.DataFrame(rows)
+        path = os.path.join(CSV_DATASET_DIR, f"{dataset_name}.csv")
+        df.to_csv(path, index=False, encoding="utf-8-sig")
+
+        return {"status": "saved", "path": path, "rows": len(rows)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if connection:
+            await connection.close()
+
+
+@app.get("/api/datasets/csv-list")
+def list_csv_datasets():
+    os.makedirs(CSV_DATASET_DIR, exist_ok=True)
+    files = glob.glob(os.path.join(CSV_DATASET_DIR, "*.csv"))
+    return [
+        {
+            "name": os.path.splitext(os.path.basename(f))[0],
+            "path": f,
+            "size_kb": round(os.path.getsize(f) / 1024, 1),
+            "modified": os.path.getmtime(f)
+        }
+        for f in sorted(files)
+    ]
 
 @app.post("/api/process")
 async def process_dataset(request: PipelineConfig):
@@ -216,6 +337,21 @@ async def upload_temp_csv(payload: dict):
     except Exception as e:
         raise HTTPException(400, detail=f"Processing failed: {str(e)}")
 
+
+@app.get("/api/datasets/list")
+async def list_datasets():
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT 
+                    dataset_name as source_dataset,
+                    COUNT(*) AS row_count
+                FROM scraped_items
+                GROUP BY dataset_name
+                ORDER BY dataset_name ASC
+            """)
+            results = await cur.fetchall()
+            return results
 
 @app.get("/api/processed/list")
 async def list_processed():

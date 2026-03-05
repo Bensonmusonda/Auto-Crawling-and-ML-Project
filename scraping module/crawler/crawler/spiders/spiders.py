@@ -37,8 +37,19 @@ class UniversalSpider(scrapy.Spider):
 
         # ScraperAPI config
         self.scraper_api_key = os.getenv("SCRAPERAPI_KEY")
-        self.tough_sites = ['amazon.com', 'ebay.com', 'walmart.com']
-
+        try:
+            db_url = (
+                f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', 'password')}"
+                f"@{os.getenv('DB_HOST', 'postgres')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'scraper_db')}"
+            )
+            with pg_sync.connect(db_url) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT value FROM app_config WHERE key = 'tough_sites'")
+                    row = cur.fetchone()
+                    self.tough_sites = row[0] if row else ['amazon.com', 'ebay.com', 'walmart.com']
+        except Exception as e:
+            self.tough_sites = ['amazon.com', 'ebay.com', 'walmart.com']
+            self.logger.warning(f"[Spider] Could not load tough_sites from DB, using defaults: {e}")
     # -------------------------
     # Request Helpers
     # -------------------------
@@ -118,6 +129,9 @@ class UniversalSpider(scrapy.Spider):
                     self.logger.debug(f"=== Extracted item {idx+1}")
                     self.items_scraped += 1
                     yield item
+                    if idx % 5 == 0:  # emit every 5 items
+                        self.emit_progress()
+                self.emit_progress()
             else:
                 yield self.extract_item(response, original_url)
 
