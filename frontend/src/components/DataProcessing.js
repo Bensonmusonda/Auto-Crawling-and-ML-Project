@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Wrench, Plus, Trash2, Play, AlertCircle, CheckCircle, ChevronDown
+    Wrench, Plus, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
 
@@ -12,7 +12,7 @@ const AVAILABLE_STEPS = [
         label: 'Drop Null Rows',
         description: 'Remove rows with missing values',
         params: [
-            { key: 'subset', label: 'Columns (comma-separated, blank for all)', type: 'text', default: '' }
+            { key: 'subset', label: 'Columns (blank for all)', type: 'multicolumn', default: '' }
         ]
     },
     {
@@ -29,7 +29,7 @@ const AVAILABLE_STEPS = [
         label: 'Remove Duplicates',
         description: 'Drop duplicate rows',
         params: [
-            { key: 'subset', label: 'Columns (comma-separated, blank for all)', type: 'text', default: '' }
+            { key: 'subset', label: 'Columns (blank for all)', type: 'multicolumn', default: '' }
         ]
     },
     {
@@ -38,7 +38,7 @@ const AVAILABLE_STEPS = [
         description: 'Scale numeric columns to a range',
         params: [
             { key: 'method', label: 'Method', type: 'select', options: ['min_max', 'z_score', 'robust'], default: 'min_max' },
-            { key: 'columns', label: 'Columns (comma-separated, blank for all numeric)', type: 'text', default: '' }
+            { key: 'columns', label: 'Columns (blank for all numeric)', type: 'multicolumn', default: '' }
         ]
     },
     {
@@ -47,7 +47,7 @@ const AVAILABLE_STEPS = [
         description: 'Convert categorical columns to numeric',
         params: [
             { key: 'method', label: 'Method', type: 'select', options: ['label', 'one_hot'], default: 'label' },
-            { key: 'columns', label: 'Columns (comma-separated)', type: 'text', default: '' }
+            { key: 'columns', label: 'Columns', type: 'multicolumn', default: '' }
         ]
     },
     {
@@ -55,7 +55,7 @@ const AVAILABLE_STEPS = [
         label: 'Drop Columns',
         description: 'Remove specified columns',
         params: [
-            { key: 'columns', label: 'Columns to drop (comma-separated)', type: 'text', default: '' }
+            { key: 'columns', label: 'Columns to drop', type: 'multicolumn', default: '' }
         ]
     },
     {
@@ -65,11 +65,112 @@ const AVAILABLE_STEPS = [
         params: [
             { key: 'mapping', label: 'Mapping (old:new, comma-separated)', type: 'text', default: '' }
         ]
+    },
+    {
+        id: 'filter_rows',
+        label: 'Filter Rows',
+        description: 'Remove rows with empty or specific values',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'exclude', label: 'Exclude values (comma-separated)', type: 'text', default: '' }
+        ]
     }
 ];
 
+// Column multi-select dropdown component
+function ColumnPicker({ value, onChange, availableColumns, placeholder = 'Select columns…' }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+
+    const selected = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    const toggle = (col) => {
+        const next = selected.includes(col)
+            ? selected.filter(c => c !== col)
+            : [...selected, col];
+        onChange(next.join(', '));
+    };
+
+    useEffect(() => {
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    if (!availableColumns || availableColumns.length === 0) {
+        return (
+            <input
+                className="form-input"
+                value={value}
+                onChange={e => onChange(e.target.value)}
+                placeholder="Select a dataset first"
+                style={{ padding: '4px 8px', fontSize: 12 }}
+            />
+        );
+    }
+
+    return (
+        <div ref={ref} style={{ position: 'relative' }}>
+            <div
+                className="form-input"
+                onClick={() => setOpen(o => !o)}
+                style={{
+                    padding: '4px 8px', fontSize: 12, cursor: 'pointer',
+                    minHeight: 30, display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between', userSelect: 'none'
+                }}
+            >
+                <span style={{ color: selected.length ? 'inherit' : 'var(--text-muted)' }}>
+                    {selected.length > 0 ? selected.join(', ') : placeholder}
+                </span>
+                <ChevronDown size={12} style={{ flexShrink: 0, marginLeft: 4 }} />
+            </div>
+            {open && (
+                <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0,
+                    background: 'var(--bg-primary)', border: '1px solid var(--border-light)',
+                    borderRadius: 'var(--radius-md)', zIndex: 100, maxHeight: 200,
+                    overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                }}>
+                    <div
+                        style={{
+                            padding: '6px 10px', fontSize: 11, color: 'var(--text-muted)',
+                            borderBottom: '1px solid var(--border-light)', cursor: 'pointer'
+                        }}
+                        onClick={() => onChange('')}
+                    >
+                        Clear selection (use all)
+                    </div>
+                    {availableColumns.map(col => (
+                        <div
+                            key={col}
+                            onClick={() => toggle(col)}
+                            style={{
+                                padding: '6px 10px', fontSize: 12, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: selected.includes(col) ? 'var(--bg-secondary)' : 'transparent',
+                                color: selected.includes(col) ? 'var(--color-primary)' : 'inherit'
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                readOnly
+                                checked={selected.includes(col)}
+                                style={{ accentColor: 'var(--color-primary)', pointerEvents: 'none' }}
+                            />
+                            <span className="mono">{col}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function DataProcessing() {
     const [datasetName, setDatasetName] = useState('');
+    const [csvPath, setCsvPath] = useState('');
+    const [availableColumns, setAvailableColumns] = useState([]);
     const [pipeline, setPipeline] = useState([]);
     const [processing, setProcessing] = useState(false);
     const [jobId, setJobId] = useState(null);
@@ -79,10 +180,19 @@ export default function DataProcessing() {
     const wsRef = useRef(null);
 
     useEffect(() => {
-        return () => {
-            if (wsRef.current) wsRef.current.close();
-        };
+        return () => { if (wsRef.current) wsRef.current.close(); };
     }, []);
+
+    const fetchColumns = async (path) => {
+        if (!path) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
+            const data = await res.json();
+            setAvailableColumns(data.columns || []);
+        } catch (_) {
+            setAvailableColumns([]);
+        }
+    };
 
     const addLog = (message, type = 'info') => {
         setLogs(prev => [...prev, { message, type, time: new Date().toLocaleTimeString() }]);
@@ -109,7 +219,6 @@ export default function DataProcessing() {
         try {
             const ws = new WebSocket('ws://localhost:8000/websocket/crawl_events');
             wsRef.current = ws;
-
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -126,30 +235,24 @@ export default function DataProcessing() {
                             addLog('Pipeline execution started...', 'info');
                         }
                     }
-                } catch (e) {
-                    // Non-JSON message
-                }
+                } catch (_) { }
             };
-
             ws.onerror = () => addLog('WebSocket connection error', 'error');
             ws.onclose = () => addLog('WebSocket disconnected', 'info');
-        } catch (e) {
+        } catch (_) {
             addLog('Cannot connect to WebSocket', 'error');
         }
     };
 
     const handleRun = async () => {
         if (!datasetName.trim() || pipeline.length === 0) {
-            setError('Enter a dataset name and add at least one processing step');
+            setError('Select a dataset and add at least one processing step');
             return;
         }
-
         setProcessing(true);
         setResult(null);
         setError(null);
         addLog(`Submitting pipeline: ${pipeline.length} steps on "${datasetName}"`, 'info');
-
-        // Connect WebSocket for real-time updates
         connectWebSocket();
 
         try {
@@ -197,13 +300,33 @@ export default function DataProcessing() {
                     <div className="card">
                         <div className="card-header">
                             <span className="card-title">Source Dataset</span>
+                            {availableColumns.length > 0 && (
+                                <span className="badge badge-neutral">
+                                    <Columns size={10} style={{ marginRight: 4 }} />
+                                    {availableColumns.length} columns
+                                </span>
+                            )}
                         </div>
                         <div className="card-body">
                             <CsvDatasetPicker
-                                value={datasetName}
-                                onChange={(path, name) => setDatasetName(name)}
+                                value={csvPath}
+                                onChange={(path, name) => {
+                                    setCsvPath(path);
+                                    setDatasetName(name);
+                                    setAvailableColumns([]);
+                                    fetchColumns(path);
+                                }}
                                 label="Source Dataset"
                             />
+                            {availableColumns.length > 0 && (
+                                <div style={{ marginTop: 'var(--space-sm)', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {availableColumns.map(col => (
+                                        <span key={col} className="badge badge-neutral mono" style={{ fontSize: 10 }}>
+                                            {col}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
                             <div className="form-hint" style={{ marginTop: 6 }}>
                                 Only datasets saved via "Save to ML Datasets" appear here
                             </div>
@@ -249,6 +372,24 @@ export default function DataProcessing() {
                                                                     <option key={opt} value={opt}>{opt}</option>
                                                                 ))}
                                                             </select>
+                                                        ) : p.type === 'singlecolumn' ? (
+                                                            <select
+                                                                className="form-select"
+                                                                value={step.params[p.key]}
+                                                                onChange={e => updateStepParam(idx, p.key, e.target.value)}
+                                                                style={{ padding: '4px 8px', fontSize: 12 }}
+                                                            >
+                                                                <option value="">Select column…</option>
+                                                                {availableColumns.map(col => (
+                                                                    <option key={col} value={col}>{col}</option>
+                                                                ))}
+                                                            </select>
+                                                        ) : p.type === 'multicolumn' ? (
+                                                            <ColumnPicker
+                                                                value={step.params[p.key]}
+                                                                onChange={val => updateStepParam(idx, p.key, val)}
+                                                                availableColumns={availableColumns}
+                                                            />
                                                         ) : (
                                                             <input
                                                                 className="form-input"
@@ -274,7 +415,6 @@ export default function DataProcessing() {
                                 })
                             )}
 
-                            {/* Add Step Dropdown */}
                             <div style={{ marginTop: 'var(--space-md)' }}>
                                 <div className="form-group" style={{ marginBottom: 0 }}>
                                     <select
@@ -296,7 +436,6 @@ export default function DataProcessing() {
                         </div>
                     </div>
 
-                    {/* Execute */}
                     <button
                         className="btn btn-primary btn-block"
                         onClick={handleRun}
@@ -310,7 +449,6 @@ export default function DataProcessing() {
                         )}
                     </button>
 
-                    {/* Error */}
                     {error && (
                         <div className="card" style={{ marginTop: 'var(--space-md)' }}>
                             <div className="card-body flex-row" style={{ color: 'var(--color-error)' }}>
@@ -320,7 +458,6 @@ export default function DataProcessing() {
                         </div>
                     )}
 
-                    {/* Result Preview */}
                     {result && (
                         <div className="card" style={{ marginTop: 'var(--space-md)' }}>
                             <div className="card-header">
@@ -396,10 +533,7 @@ export default function DataProcessing() {
                     <div className="card-header">
                         <span className="card-title">Activity Log</span>
                         {logs.length > 0 && (
-                            <button
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setLogs([])}
-                            >
+                            <button className="btn btn-secondary btn-sm" onClick={() => setLogs([])}>
                                 Clear
                             </button>
                         )}

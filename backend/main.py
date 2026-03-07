@@ -77,10 +77,43 @@ async def get_redis_health_check():
 @app.post("/api/crawl")
 async def send_crawl_task(config_request: CrawlRequest):
     json_config = config_request.model_dump()
-    
+
     result = celery_app.send_task('tasks.run_crawl_task', args=(json_config,))
+
+    # Save crawl config for workflow pre-filling
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS crawl_jobs (
+                    job_id VARCHAR(255) PRIMARY KEY,
+                    dataset_name VARCHAR(255),
+                    config JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            await cur.execute("""
+                INSERT INTO crawl_jobs (job_id, dataset_name, config)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (job_id) DO NOTHING
+            """, (result.id, config_request.dataset_name, json.dumps(json_config)))
+            await conn.commit()
+
     asyncio.create_task(monitor_crawl_events())
     return {"started crawl job": result.id}
+
+
+@app.get("/api/crawl/configs/{dataset_name}")
+async def get_crawl_configs(dataset_name: str):
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT job_id, dataset_name, config, created_at
+                FROM crawl_jobs
+                WHERE dataset_name = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (dataset_name,))
+            return await cur.fetchall()
 
 @app.get("/api/crawl/monitor")
 async def monitor_crawl_events():
@@ -288,6 +321,16 @@ def list_csv_datasets():
         for f in sorted(files)
     ]
 
+@app.get("/api/datasets/csv-columns")
+def get_csv_columns(path: str):
+    if not os.path.exists(path):
+        raise HTTPException(404, "CSV file not found")
+    try:
+        df = pd.read_csv(path, nrows=0)  # read only header row
+        return {"columns": list(df.columns)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 @app.post("/api/process")
 async def process_dataset(request: PipelineConfig):
     try:
@@ -397,3 +440,126 @@ async def get_processed_csv(source_name: str):
             )
 
 app.include_router(processed_router)
+
+"""
+Worflows
+"""
+# ── Workflow table helper ───────────────────────────────────
+async def ensure_workflows_table():
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS workflows (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    dataset_name VARCHAR(255) NOT NULL,
+                    stages JSONB NOT NULL,
+                    last_run_at TIMESTAMP,
+                    last_run_status VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            await conn.commit()
+
+
+# ── Workflow endpoints ──────────────────────────────────────
+@app.post("/api/workflows")
+async def create_workflow(payload: dict):
+    await ensure_workflows_table()
+    name = payload.get('name')
+    dataset_name = payload.get('dataset_name')
+    stages = payload.get('stages')
+
+    if not all([name, dataset_name, stages]):
+        raise HTTPException(400, "name, dataset_name and stages are required")
+
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                INSERT INTO workflows (name, dataset_name, stages)
+                VALUES (%s, %s, %s)
+                RETURNING id, name, dataset_name, stages, last_run_at, last_run_status, created_at
+            """, (name, dataset_name, json.dumps(stages)))
+            row = await cur.fetchone()
+            await conn.commit()
+            return row
+
+
+@app.get("/api/workflows")
+async def list_workflows():
+    await ensure_workflows_table()
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT id, name, dataset_name, stages,
+                       last_run_at, last_run_status, created_at
+                FROM workflows ORDER BY created_at DESC
+            """)
+            return await cur.fetchall()
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_workflow(workflow_id: int):
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM workflows WHERE id = %s", (workflow_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Workflow not found")
+            return row
+
+
+@app.put("/api/workflows/{workflow_id}")
+async def update_workflow(workflow_id: int, payload: dict):
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                UPDATE workflows
+                SET name = COALESCE(%s, name),
+                    dataset_name = COALESCE(%s, dataset_name),
+                    stages = COALESCE(%s::jsonb, stages)
+                WHERE id = %s
+                RETURNING *
+            """, (
+                payload.get('name'),
+                payload.get('dataset_name'),
+                json.dumps(payload['stages']) if 'stages' in payload else None,
+                workflow_id
+            ))
+            row = await cur.fetchone()
+            await conn.commit()
+            if not row:
+                raise HTTPException(404, "Workflow not found")
+            return row
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: int):
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM workflows WHERE id = %s RETURNING id", (workflow_id,)
+            )
+            row = await cur.fetchone()
+            await conn.commit()
+            if not row:
+                raise HTTPException(404, "Workflow not found")
+            return {"deleted": workflow_id}
+
+
+@app.post("/api/workflows/{workflow_id}/run")
+async def run_workflow(workflow_id: int):
+    # Verify workflow exists
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id, name FROM workflows WHERE id = %s", (workflow_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Workflow not found")
+
+    task = celery_app.send_task(
+        'run_workflow',
+        args=[workflow_id],
+        queue='ml_tasks'
+    )
+    return {"job_id": task.id, "workflow_id": workflow_id, "status": "submitted"}

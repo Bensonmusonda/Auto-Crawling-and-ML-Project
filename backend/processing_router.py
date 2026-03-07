@@ -59,3 +59,42 @@ async def execute_processing(request: ProcessRequest):
     finally:
         if connection:
             await connection.close()
+
+@router.post("/execute")
+async def execute_processing(request: ProcessRequest):
+    connection = None
+    try:
+        connection = await psycopg.AsyncConnection.connect(conninfo=DB_URL)
+        async with connection.cursor() as cur:
+            query = "SELECT data FROM scraped_items WHERE dataset_name = %s;"
+            await cur.execute(query, (request.dataset_name,))
+            records = await cur.fetchall()
+            rows = [row[0] for row in records]
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="Dataset is empty or not found.")
+
+        df = pd.DataFrame(rows)
+        pipeline_dicts = [step.model_dump() for step in request.pipeline]
+        processed_df = run_pipeline(df, pipeline_dicts)
+
+        # ── Save to /app/datasets/ for ML training ──────────────
+        os.makedirs('/app/datasets', exist_ok=True)
+        csv_path = f"/app/datasets/{request.dataset_name}.csv"
+        processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        # ────────────────────────────────────────────────────────
+
+        stream = io.StringIO()
+        processed_df.to_csv(stream, index=False, encoding="utf-8-sig")
+        response = StreamingResponse(
+            iter([stream.getvalue()]),
+            media_type="text/csv"
+        )
+        response.headers["Content-Disposition"] = f"attachment; filename=processed_{request.dataset_name}.csv"
+        return response
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing Error: {str(e)}")
+    finally:
+        if connection:
+            await connection.close()

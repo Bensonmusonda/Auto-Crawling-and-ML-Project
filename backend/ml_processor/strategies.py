@@ -52,17 +52,19 @@ def convert_type(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 
 def scale_features(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """Applies MinMax or Standard scaling."""
-    col = kwargs.get('column')
+    # Support both 'column' and 'columns' from UI
+    col = kwargs.get('column') or kwargs.get('columns', '')
     method = kwargs.get('method', 'minmax')
 
-    if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
-        data = df[col].values.reshape(-1, 1)
-        if method == 'standard':
-            scaler = StandardScaler()
-        else:
-            scaler = MinMaxScaler()
-            
-        df[f"{col}_scaled"] = scaler.fit_transform(data)
+    cols = [c.strip() for c in col.split(',')] if col else []
+    if not cols:
+        cols = df.select_dtypes(include='number').columns.tolist()
+
+    for c in cols:
+        if c in df.columns and pd.api.types.is_numeric_dtype(df[c]):
+            data = df[c].values.reshape(-1, 1)
+            scaler = StandardScaler() if method in ('z_score', 'standard') else MinMaxScaler()
+            df[c] = scaler.fit_transform(data)
     return df
 
 def one_hot_encode(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
@@ -116,4 +118,44 @@ def sentiment_analysis(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
             return TextBlob(str(text)).sentiment.polarity
 
         df[f"{col}_sentiment"] = df[col].apply(get_sentiment)
+    return df
+
+def remove_duplicates(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Removes duplicate rows."""
+    subset = kwargs.get('subset', None)
+    if subset and isinstance(subset, str):
+        subset = [s.strip() for s in subset.split(',') if s.strip()]
+    return df.drop_duplicates(subset=subset if subset else None)
+
+def rename_columns(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Renames columns using a mapping string like 'old:new, old2:new2'."""
+    mapping_str = kwargs.get('mapping', '')
+    mapping = {}
+    for pair in mapping_str.split(','):
+        parts = pair.strip().split(':')
+        if len(parts) == 2:
+            old, new = parts[0].strip(), parts[1].strip()
+            if old in df.columns:
+                mapping[old] = new
+    if mapping:
+        df = df.rename(columns=mapping)
+    return df
+
+
+def filter_rows(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Remove rows where a column equals a specific value or is empty."""
+    col = kwargs.get('column')
+    exclude = kwargs.get('exclude', '')
+    
+    if col not in df.columns:
+        return df
+    
+    # Remove empty strings and whitespace-only values
+    df = df[df[col].astype(str).str.strip() != '']
+    
+    # Remove specific values if provided
+    if exclude:
+        values_to_exclude = [v.strip() for v in exclude.split(',')]
+        df = df[~df[col].astype(str).isin(values_to_exclude)]
+    
     return df

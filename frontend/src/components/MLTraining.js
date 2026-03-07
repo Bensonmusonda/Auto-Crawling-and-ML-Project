@@ -44,6 +44,19 @@ export default function MLTraining() {
         fetchTrainedModels();
     }, []);
 
+    const [availableColumns, setAvailableColumns] = useState([]);
+
+    // Add this function:
+    const fetchColumns = async (path) => {
+        try {
+            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
+            const data = await res.json();
+            setAvailableColumns(data.columns || []);
+        } catch (_) {
+            setAvailableColumns([]);
+        }
+    };
+
     useEffect(() => {
         if (jobId && training) {
             const interval = setInterval(() => checkJobStatus(jobId), 2000);
@@ -242,7 +255,11 @@ export default function MLTraining() {
                                 <div className="form-group">
                                     <CsvDatasetPicker
                                         value={csvPath}
-                                        onChange={(path) => setCsvPath(path)}
+                                        onChange={(path) => {
+                                            setCsvPath(path);
+                                            setTargetColumn('');
+                                            fetchColumns(path);
+                                        }}
                                         label="CSV Path"
                                     />
                                     <div className="form-hint" style={{ marginTop: 6 }}>
@@ -251,12 +268,26 @@ export default function MLTraining() {
                                 </div>
                                 <div className="form-group" style={{ marginBottom: 0 }}>
                                     <label className="form-label">Target Column</label>
-                                    <input
-                                        className="form-input"
-                                        value={targetColumn}
-                                        onChange={e => setTargetColumn(e.target.value)}
-                                        placeholder="e.g. Survived"
-                                    />
+                                    {availableColumns.length > 0 ? (
+                                        <select
+                                            className="form-select"
+                                            value={targetColumn}
+                                            onChange={e => setTargetColumn(e.target.value)}
+                                        >
+                                            <option value="" disabled>Select target column…</option>
+                                            {availableColumns.map(col => (
+                                                <option key={col} value={col}>{col}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <input
+                                            className="form-input"
+                                            value={targetColumn}
+                                            onChange={e => setTargetColumn(e.target.value)}
+                                            placeholder="Select a dataset first"
+                                            disabled={!csvPath}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         </div>

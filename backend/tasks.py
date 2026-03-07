@@ -74,7 +74,6 @@ def archive_processed_data(df, source_name, pipeline_config):
 
 @celery_app.task(bind=True)
 def run_ml_pipeline(self, dataset_name, pipeline_config):
-    """Existing data cleaning pipeline task"""
     job_id = self.request.id
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
     r.publish('crawl_events', json.dumps({
@@ -89,11 +88,14 @@ def run_ml_pipeline(self, dataset_name, pipeline_config):
         engine = UniversalEngine(raw_data)
         processed_df, logs = engine.run_pipeline(pipeline_config)
 
-        # --- NEW: ARCHIVE STEP ---
         archive_processed_data(processed_df, dataset_name, pipeline_config)
-        # -------------------------
 
-        # Handle NaN for the preview JSON
+        # ── Save CSV to /app/datasets/ ──────────────────────────
+        os.makedirs('/app/datasets', exist_ok=True)
+        csv_path = f"/app/datasets/{dataset_name}.csv"
+        processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        # ────────────────────────────────────────────────────────
+
         preview_df = processed_df.fillna("NaN")
         preview = preview_df.head(5).to_dict(orient='records')
 
@@ -114,7 +116,6 @@ def run_ml_pipeline(self, dataset_name, pipeline_config):
             "job_id": job_id, "type": "ml_job", "status": "failed", "error": str(e)
         }))
         raise e
-
 
 @celery_app.task(bind=True, name='run_model_training')
 def run_model_training(self, csv_path: str, target_column: str, model_type: str, params: dict):
@@ -186,4 +187,188 @@ def run_model_training(self, csv_path: str, target_column: str, model_type: str,
             "model_type": model_type
         }
         r.publish('crawl_events', json.dumps(error_payload))
+        raise e
+
+@celery_app.task(bind=True, name='run_workflow')
+def run_workflow(self, workflow_id: int):
+    job_id = self.request.id
+    r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
+
+    def publish(status, stage=None, message=None, error=None):
+        r.publish('crawl_events', json.dumps({
+            "job_id": job_id,
+            "type": "workflow",
+            "workflow_id": workflow_id,
+            "stage": stage,
+            "status": status,
+            "message": message,
+            "error": error
+        }))
+
+    def update_workflow_status(status):
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE workflows
+                    SET last_run_at = NOW(), last_run_status = %s
+                    WHERE id = %s
+                """, (status, workflow_id))
+                conn.commit()
+
+    try:
+        # Load workflow
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM workflows WHERE id = %s", (workflow_id,))
+                workflow = cur.fetchone()
+
+        if not workflow:
+            raise ValueError(f"Workflow {workflow_id} not found")
+
+        dataset_name = workflow['dataset_name']
+        stages = workflow['stages']
+
+        publish('started', message=f"Workflow '{workflow['name']}' started")
+        update_workflow_status('running')
+
+        # ── Stage 1: Crawl ──────────────────────────────────────
+        if stages.get('crawl', {}).get('enabled'):
+            publish('running', stage='crawl', message='Crawl stage started')
+
+            crawl_config = stages['crawl']['config']
+            crawl_config['dataset_name'] = dataset_name
+
+            # Dispatch to scraping worker
+            crawl_task = celery_app.send_task(
+                'tasks.run_crawl_task',
+                args=[crawl_config],
+                queue='default'
+            )
+
+            # Wait for done/error event via Redis pub/sub
+            pubsub = r.pubsub()
+            pubsub.subscribe('crawl_events')
+            crawl_done = False
+            timeout = 3600  # 1 hour max
+            import time
+            start = time.time()
+
+            for message in pubsub.listen():
+                if time.time() - start > timeout:
+                    raise TimeoutError("Crawl stage timed out")
+                if message['type'] != 'message':
+                    continue
+                try:
+                    data = json.loads(message['data'])
+                    if data.get('job_id') != crawl_task.id:
+                        continue
+                    if data.get('event') == 'done':
+                        crawl_done = True
+                        break
+                    if data.get('event') == 'error':
+                        raise RuntimeError(f"Crawl failed: {data.get('message')}")
+                except Exception:
+                    continue
+
+            pubsub.unsubscribe()
+            if not crawl_done:
+                raise RuntimeError("Crawl stage did not complete")
+
+            publish('completed', stage='crawl', message='Crawl stage complete')
+
+        # ── Stage 2: Processing ─────────────────────────────────
+        csv_path = os.path.join('/app/datasets', f"{dataset_name}.csv")
+
+        if stages.get('processing', {}).get('enabled'):
+            publish('running', stage='processing', message='Processing stage started')
+
+            pipeline_config = stages['processing']['config']['steps']
+
+            # Fetch raw data
+            raw_data = fetch_dataset(dataset_name)
+            if not raw_data:
+                raise ValueError(f"No data found for dataset '{dataset_name}'")
+
+            # Run pipeline
+            engine = UniversalEngine(raw_data)
+            processed_df, logs = engine.run_pipeline(pipeline_config)
+
+            # Archive to processed_items
+            archive_processed_data(processed_df, dataset_name, pipeline_config)
+
+            # Save CSV for ML stage
+            os.makedirs('/app/datasets', exist_ok=True)
+            processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+
+            publish('completed', stage='processing',
+                    message=f'Processing complete — {len(processed_df)} rows, {len(processed_df.columns)} columns')
+
+        # ── Stage 3: ML Training ────────────────────────────────
+        if stages.get('ml', {}).get('enabled'):
+            publish('running', stage='ml', message='ML training stage started')
+
+            ml_config = stages['ml']['config']
+
+            if not os.path.exists(csv_path):
+                raise FileNotFoundError(
+                    f"CSV not found at {csv_path}. "
+                    "Enable the processing stage or manually save the dataset first."
+                )
+
+            # Resolve hyperparams
+            params = ml_config.get('params') or {}
+            if ml_config.get('auto_tune', True) or not params:
+                df_temp = pd.read_csv(csv_path)
+                from ml_training.registry import ModelRegistry
+                reg = ModelRegistry()
+                params = reg.suggest_hyperparameters(
+                    ml_config['model_type'],
+                    n_samples=len(df_temp),
+                    n_features=len(df_temp.columns) - 1
+                )
+
+            ml_task = celery_app.send_task(
+                'run_model_training',
+                args=[csv_path, ml_config['target_column'], ml_config['model_type'], params],
+                queue='ml_tasks'
+            )
+
+            # Wait for ML task completion
+            pubsub = r.pubsub()
+            pubsub.subscribe('crawl_events')
+            ml_done = False
+            start = time.time()
+
+            for message in pubsub.listen():
+                if time.time() - start > timeout:
+                    raise TimeoutError("ML training stage timed out")
+                if message['type'] != 'message':
+                    continue
+                try:
+                    data = json.loads(message['data'])
+                    if data.get('job_id') != ml_task.id:
+                        continue
+                    if data.get('type') == 'model_training':
+                        if data.get('status') == 'completed':
+                            ml_done = True
+                            break
+                        if data.get('status') == 'failed':
+                            raise RuntimeError(f"ML training failed: {data.get('error')}")
+                except Exception:
+                    continue
+
+            pubsub.unsubscribe()
+            if not ml_done:
+                raise RuntimeError("ML training stage did not complete")
+
+            publish('completed', stage='ml', message='ML training complete')
+
+        # ── All stages done ─────────────────────────────────────
+        publish('completed', message=f"Workflow '{workflow['name']}' completed successfully")
+        update_workflow_status('completed')
+        return f"Workflow {workflow_id} completed"
+
+    except Exception as e:
+        publish('failed', error=str(e))
+        update_workflow_status('failed')
         raise e

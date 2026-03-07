@@ -5,6 +5,7 @@ import DatasetExplorer from './components/DatasetExplorer';
 import DataProcessing from './components/DataProcessing';
 import MLTraining from './components/MLTraining';
 import CrawlMonitor from './components/CrawlMonitor';
+import Workflows from './components/Workflows';
 
 function buildEventMessage(data) {
   if (data.event === 'progress') {
@@ -124,6 +125,8 @@ export default function App() {
             onClearEvents={() => setEvents([])}
           />
         );
+      case 'workflows':
+        return <Workflows wsEvents={events} />;
       default: return <DatasetExplorer />;
     }
   };

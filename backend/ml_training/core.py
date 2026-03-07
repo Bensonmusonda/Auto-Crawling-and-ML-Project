@@ -77,12 +77,18 @@ class ModelTrainer:
         
         # Convert to numpy arrays
         X = X.values
-        y = y.values
+        y = y if isinstance(y, np.ndarray) else y.values
         
-        # Perform 80/20 train/test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y if task_type == "classification" else None
-        )
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42,
+                stratify=y if task_type == "classification" else None
+            )
+        except ValueError:
+            # Fall back to no stratification if any class has too few members
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
         
         return X_train, X_test, y_train, y_test
     

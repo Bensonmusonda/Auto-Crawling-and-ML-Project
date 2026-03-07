@@ -1,11 +1,12 @@
 import React from 'react';
-import { Database, Wrench, Brain, Activity } from 'lucide-react';
+import { Database, Wrench, Brain, Activity, GitBranch } from 'lucide-react';
 
 const tabs = [
   { id: 'datasets', label: 'Datasets', icon: Database },
   { id: 'processing', label: 'Processing', icon: Wrench },
   { id: 'training', label: 'ML Training', icon: Brain },
-  { id: 'crawl', label: 'Crawl Monitor', icon: Activity }
+  { id: 'crawl', label: 'Crawl Monitor', icon: Activity },
+  { id: 'workflows', label: 'Workflows', icon: GitBranch },
 ];
 
 export default function Sidebar({ activeTab, onTabChange, wsConnected }) {
