@@ -175,7 +175,7 @@ async def ensure_app_config_table(conn):
         # Seed tough_sites if not present
         await cur.execute("""
             INSERT INTO app_config (key, value)
-            VALUES ('tough_sites', '["amazon.com", "ebay.com", "walmart.com"]'::jsonb)
+            VALUES ('tough_sites', '["amazon.com", "ebay.com", "walmart.com", "worldometers.info"]'::jsonb)
             ON CONFLICT (key) DO NOTHING;
         """)
         await conn.commit()
@@ -336,7 +336,7 @@ async def process_dataset(request: PipelineConfig):
     try:
         task = celery_app.send_task(
             'tasks.run_ml_pipeline', 
-            args=[request.dataset_name, [step.model_dump() for step in request.steps]],
+            args=[request.dataset_name, [step.model_dump() for step in request.steps], request.source],
             queue='ml_tasks'
         )
         
@@ -563,3 +563,61 @@ async def run_workflow(workflow_id: int):
         queue='ml_tasks'
     )
     return {"job_id": task.id, "workflow_id": workflow_id, "status": "submitted"}
+
+
+@app.get("/api/workflows/{workflow_id}/history")
+async def get_workflow_history(workflow_id: int, limit: int = 5):
+    """Return the last N run records for a workflow, newest first."""
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            # Ensure table exists (handles first request before any run)
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_runs (
+                    id            SERIAL PRIMARY KEY,
+                    run_id        VARCHAR(64) UNIQUE NOT NULL,
+                    workflow_id   INTEGER NOT NULL,
+                    status        VARCHAR(32) DEFAULT 'running',
+                    crawl_job_id  VARCHAR(255),
+                    model_job_id  VARCHAR(255),
+                    output_csv    TEXT,
+                    stage_results JSONB DEFAULT '{}',
+                    started_at    TIMESTAMP DEFAULT NOW(),
+                    finished_at   TIMESTAMP
+                );
+            """)
+            await conn.commit()
+
+            await cur.execute("""
+                SELECT
+                    run_id, workflow_id, status,
+                    crawl_job_id, model_job_id, output_csv,
+                    stage_results, started_at, finished_at
+                FROM workflow_runs
+                WHERE workflow_id = %s
+                ORDER BY started_at DESC
+                LIMIT %s
+            """, (workflow_id, limit))
+
+            rows = await cur.fetchall()
+
+    result = []
+    for row in rows:
+        duration = None
+        if row["started_at"] and row["finished_at"]:
+            delta = row["finished_at"] - row["started_at"]
+            total_seconds = int(delta.total_seconds())
+            duration = f"{total_seconds // 60}m {total_seconds % 60}s"
+
+        result.append({
+            "run_id": row["run_id"],
+            "status": row["status"],
+            "crawl_job_id": row["crawl_job_id"],
+            "model_job_id": row["model_job_id"],
+            "output_csv": row["output_csv"],
+            "stage_results": row["stage_results"],
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+            "duration": duration,
+        })
+
+    return result

@@ -72,7 +72,15 @@ const AVAILABLE_STEPS = [
         description: 'Remove rows with empty or specific values',
         params: [
             { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
-            { key: 'exclude', label: 'Exclude values (comma-separated)', type: 'text', default: '' }
+        ]
+    },
+    {
+        id: 'clean_numeric_column',
+        label: 'Clean Numeric Column',
+        description: 'Strip HTML tags/chars and convert to number',
+        params: [
+            { key: 'column', label: 'Column name', type: 'singlecolumn', default: '' },
+            { key: 'strip_chars', label: 'Characters to strip (e.g. US $, out of 5 stars)', type: 'text', default: '' }
         ]
     }
 ];

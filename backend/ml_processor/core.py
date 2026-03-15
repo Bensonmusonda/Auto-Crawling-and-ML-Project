@@ -5,9 +5,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 class UniversalEngine:
-    def __init__(self, dataset: list[dict]):
-        # Convert list of dicts (JSON) to DataFrame
-        self.df = pd.DataFrame(dataset)
+    def __init__(self, dataset):
+        if isinstance(dataset, pd.DataFrame):
+            self.df = dataset.copy()
+        else:
+            self.df = pd.DataFrame(dataset)
         self.logs = []
 
     def run_pipeline(self, pipeline_config: list):

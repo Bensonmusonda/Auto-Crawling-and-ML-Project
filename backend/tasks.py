@@ -25,8 +25,13 @@ celery_app = Celery(
     backend=f'redis://{REDIS_HOST}:6379/1'
 )
 
-def fetch_dataset(dataset_name):
-    """Connects to Postgres to get raw scraped data"""
+def fetch_dataset(dataset_name, source="db"):
+    """Connects to Postgres to get raw scraped data or reads CSV if source == 'csv'"""
+    if source == "csv":
+        csv_path = f"/app/datasets/{dataset_name}.csv"
+        if os.path.exists(csv_path):
+            return pd.read_csv(csv_path)
+
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT data FROM scraped_items WHERE dataset_name = %s", (dataset_name,))
@@ -73,7 +78,7 @@ def archive_processed_data(df, source_name, pipeline_config):
             conn.commit()
 
 @celery_app.task(bind=True)
-def run_ml_pipeline(self, dataset_name, pipeline_config):
+def run_ml_pipeline(self, dataset_name, pipeline_config, source="csv"):
     job_id = self.request.id
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
     r.publish('crawl_events', json.dumps({
@@ -81,8 +86,8 @@ def run_ml_pipeline(self, dataset_name, pipeline_config):
     }))
 
     try:
-        raw_data = fetch_dataset(dataset_name)
-        if not raw_data:
+        raw_data = fetch_dataset(dataset_name, source=source)
+        if raw_data is None or (isinstance(raw_data, list) and not raw_data) or (isinstance(raw_data, pd.DataFrame) and raw_data.empty):
             raise ValueError("Dataset empty or not found")
 
         engine = UniversalEngine(raw_data)
@@ -189,10 +194,68 @@ def run_model_training(self, csv_path: str, target_column: str, model_type: str,
         r.publish('crawl_events', json.dumps(error_payload))
         raise e
 
+# ── Workflow Run Helpers ────────────────────────────────────
+def ensure_workflow_runs_table(conn):
+    """Create workflow_runs table if it doesn't exist."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id            SERIAL PRIMARY KEY,
+                run_id        VARCHAR(64) UNIQUE NOT NULL,
+                workflow_id   INTEGER NOT NULL,
+                status        VARCHAR(32) DEFAULT 'running',
+                crawl_job_id  VARCHAR(255),
+                model_job_id  VARCHAR(255),
+                output_csv    TEXT,
+                stage_results JSONB DEFAULT '{}',
+                started_at    TIMESTAMP DEFAULT NOW(),
+                finished_at   TIMESTAMP
+            );
+        """)
+        conn.commit()
+
+
+def create_workflow_run(run_id, workflow_id):
+    """Insert a new run record at the start of execution."""
+    with psycopg.connect(DATABASE_URL) as conn:
+        ensure_workflow_runs_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO workflow_runs (run_id, workflow_id, status, started_at)
+                VALUES (%s, %s, 'running', NOW())
+                ON CONFLICT (run_id) DO NOTHING
+            """, (run_id, workflow_id))
+            conn.commit()
+
+
+def update_workflow_run(run_id, **kwargs):
+    """Patch any columns on the workflow_run row."""
+    if not kwargs:
+        return
+    allowed = {'status', 'crawl_job_id', 'model_job_id', 'output_csv', 'stage_results', 'finished_at'}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ', '.join(f"{k} = %s" for k in updates)
+    values = list(updates.values()) + [run_id]
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE workflow_runs SET {set_clause} WHERE run_id = %s",
+                values
+            )
+            conn.commit()
+
+
 @celery_app.task(bind=True, name='run_workflow')
 def run_workflow(self, workflow_id: int):
     job_id = self.request.id
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
+    import time
+
+    # ── Create run record ───────────────────────────────────────
+    create_workflow_run(job_id, workflow_id)
+    stage_results = {}
 
     def publish(status, stage=None, message=None, error=None):
         r.publish('crawl_events', json.dumps({
@@ -204,6 +267,11 @@ def run_workflow(self, workflow_id: int):
             "message": message,
             "error": error
         }))
+
+    def record_stage(stage, status, message=None):
+        """Update stage_results in memory and persist to DB."""
+        stage_results[stage] = {"status": status, "message": message}
+        update_workflow_run(job_id, stage_results=json.dumps(stage_results))
 
     def update_workflow_status(status):
         with psycopg.connect(DATABASE_URL) as conn:
@@ -232,25 +300,26 @@ def run_workflow(self, workflow_id: int):
         update_workflow_status('running')
 
         # ── Stage 1: Crawl ──────────────────────────────────────
+        crawl_job_id = None
         if stages.get('crawl', {}).get('enabled'):
             publish('running', stage='crawl', message='Crawl stage started')
 
             crawl_config = stages['crawl']['config']
             crawl_config['dataset_name'] = dataset_name
 
-            # Dispatch to scraping worker
             crawl_task = celery_app.send_task(
                 'tasks.run_crawl_task',
                 args=[crawl_config],
                 queue='default'
             )
+            crawl_job_id = crawl_task.id
+            update_workflow_run(job_id, crawl_job_id=crawl_job_id)
 
             # Wait for done/error event via Redis pub/sub
             pubsub = r.pubsub()
             pubsub.subscribe('crawl_events')
             crawl_done = False
-            timeout = 3600  # 1 hour max
-            import time
+            timeout = 3600
             start = time.time()
 
             for message in pubsub.listen():
@@ -262,7 +331,7 @@ def run_workflow(self, workflow_id: int):
                     data = json.loads(message['data'])
                     if data.get('job_id') != crawl_task.id:
                         continue
-                    if data.get('event') == 'done':
+                    if data.get('event') in ('done', 'finished'):
                         crawl_done = True
                         break
                     if data.get('event') == 'error':
@@ -274,6 +343,7 @@ def run_workflow(self, workflow_id: int):
             if not crawl_done:
                 raise RuntimeError("Crawl stage did not complete")
 
+            record_stage('crawl', 'completed', 'Crawl stage complete')
             publish('completed', stage='crawl', message='Crawl stage complete')
 
         # ── Stage 2: Processing ─────────────────────────────────
@@ -284,26 +354,28 @@ def run_workflow(self, workflow_id: int):
 
             pipeline_config = stages['processing']['config']['steps']
 
-            # Fetch raw data
-            raw_data = fetch_dataset(dataset_name)
-            if not raw_data:
+            raw_data = fetch_dataset(dataset_name, source='csv')
+            if raw_data is None or (isinstance(raw_data, list) and not raw_data) or \
+               (hasattr(raw_data, 'empty') and raw_data.empty):
                 raise ValueError(f"No data found for dataset '{dataset_name}'")
 
-            # Run pipeline
             engine = UniversalEngine(raw_data)
             processed_df, logs = engine.run_pipeline(pipeline_config)
 
-            # Archive to processed_items
             archive_processed_data(processed_df, dataset_name, pipeline_config)
 
-            # Save CSV for ML stage
             os.makedirs('/app/datasets', exist_ok=True)
             processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
 
+            row_count = len(processed_df)
+            col_count = len(processed_df.columns)
+            record_stage('processing', 'completed',
+                         f'{row_count} rows, {col_count} columns')
             publish('completed', stage='processing',
-                    message=f'Processing complete — {len(processed_df)} rows, {len(processed_df.columns)} columns')
+                    message=f'Processing complete — {row_count} rows, {col_count} columns')
 
         # ── Stage 3: ML Training ────────────────────────────────
+        model_job_id = None
         if stages.get('ml', {}).get('enabled'):
             publish('running', stage='ml', message='ML training stage started')
 
@@ -312,13 +384,20 @@ def run_workflow(self, workflow_id: int):
             if not os.path.exists(csv_path):
                 raise FileNotFoundError(
                     f"CSV not found at {csv_path}. "
-                    "Enable the processing stage or manually save the dataset first."
+                    "Enable the processing stage or save the dataset first."
                 )
 
-            # Resolve hyperparams
+            # Validate target_column exists in the CSV
+            df_temp = pd.read_csv(csv_path)
+            target_col = ml_config.get('target_column', '')
+            if target_col not in df_temp.columns:
+                raise ValueError(
+                    f"target_column '{target_col}' not found in processed CSV. "
+                    f"Available columns: {list(df_temp.columns)}"
+                )
+
             params = ml_config.get('params') or {}
             if ml_config.get('auto_tune', True) or not params:
-                df_temp = pd.read_csv(csv_path)
                 from ml_training.registry import ModelRegistry
                 reg = ModelRegistry()
                 params = reg.suggest_hyperparameters(
@@ -329,11 +408,12 @@ def run_workflow(self, workflow_id: int):
 
             ml_task = celery_app.send_task(
                 'run_model_training',
-                args=[csv_path, ml_config['target_column'], ml_config['model_type'], params],
+                args=[csv_path, target_col, ml_config['model_type'], params],
                 queue='ml_tasks'
             )
+            model_job_id = ml_task.id
+            update_workflow_run(job_id, model_job_id=model_job_id)
 
-            # Wait for ML task completion
             pubsub = r.pubsub()
             pubsub.subscribe('crawl_events')
             ml_done = False
@@ -361,14 +441,26 @@ def run_workflow(self, workflow_id: int):
             if not ml_done:
                 raise RuntimeError("ML training stage did not complete")
 
+            record_stage('ml', 'completed', 'Training complete')
             publish('completed', stage='ml', message='ML training complete')
 
         # ── All stages done ─────────────────────────────────────
+        update_workflow_run(
+            job_id,
+            status='completed',
+            finished_at=time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+        )
         publish('completed', message=f"Workflow '{workflow['name']}' completed successfully")
         update_workflow_status('completed')
         return f"Workflow {workflow_id} completed"
 
     except Exception as e:
+        record_stage('error', 'failed', str(e))
+        update_workflow_run(
+            job_id,
+            status='failed',
+            finished_at=time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
+        )
         publish('failed', error=str(e))
         update_workflow_status('failed')
         raise e

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Play, Plus, Trash2, Edit2, CheckCircle, XCircle,
-    Clock, ChevronDown, ChevronUp, Activity
+    Clock, ChevronDown, ChevronUp, Activity, History
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -13,12 +13,23 @@ const AVAILABLE_STEPS = [
     { id: 'normalize', label: 'Normalize', params: [{ key: 'method', label: 'Method', type: 'select', options: ['min_max', 'z_score', 'robust'], default: 'min_max' }, { key: 'columns', label: 'Columns', type: 'text', default: '' }] },
     { id: 'encode_categorical', label: 'Encode Categorical', params: [{ key: 'method', label: 'Method', type: 'select', options: ['label', 'one_hot'], default: 'label' }, { key: 'columns', label: 'Columns', type: 'text', default: '' }] },
     { id: 'drop_columns', label: 'Drop Columns', params: [{ key: 'columns', label: 'Columns to drop', type: 'text', default: '' }] },
+    { id: 'clean_numeric_column', label: 'Clean Numeric Column', params: [{ key: 'column', label: 'Column name', type: 'text', default: '' }, { key: 'strip_chars', label: 'Characters to strip (e.g. US $, out of 5 stars)', type: 'text', default: '' }] },
 ];
 
 const ML_MODELS = ['random_forest', 'logistic_regression', 'linear_regression', 'decision_tree', 'gradient_boosting', 'svm'];
 
 const emptyStages = () => ({
-    crawl: { enabled: true, config: { start_url: '', crawl_type: 'flat', container_selector: '', item_selectors: {} } },
+    crawl: {
+        enabled: true,
+        config: {
+            start_url: '',
+            crawl_type: 'flat',
+            container_selector: '',
+            item_selectors: {},
+            link_selector: '',
+            pagination: { enabled: false, method: 'selector', selector: '', max_pages: 3 }
+        }
+    },
     processing: { enabled: true, config: { steps: [] } },
     ml: { enabled: true, config: { target_column: '', model_type: 'random_forest', auto_tune: true, params: {} } }
 });
@@ -56,6 +67,8 @@ export default function Workflows({ wsEvents = [] }) {
 
     // Running jobs — derived from wsEvents prop
     const [runningWorkflows, setRunningWorkflows] = useState({});
+    // Run history — { [wf.id]: { open: bool, loading: bool, runs: [] } }
+    const [historyState, setHistoryState] = useState({});
 
     useEffect(() => {
         fetchWorkflows();
@@ -98,6 +111,22 @@ export default function Workflows({ wsEvents = [] }) {
         }
     };
 
+    const toggleHistory = async (wfId) => {
+        const current = historyState[wfId];
+        if (current?.open) {
+            setHistoryState(prev => ({ ...prev, [wfId]: { ...prev[wfId], open: false } }));
+            return;
+        }
+        setHistoryState(prev => ({ ...prev, [wfId]: { open: true, loading: true, runs: [] } }));
+        try {
+            const res = await fetch(`${API_BASE}/api/workflows/${wfId}/history?limit=5`);
+            const data = await res.json();
+            setHistoryState(prev => ({ ...prev, [wfId]: { open: true, loading: false, runs: data } }));
+        } catch (_) {
+            setHistoryState(prev => ({ ...prev, [wfId]: { open: true, loading: false, runs: [] } }));
+        }
+    };
+
     const fetchCrawlConfigs = async (datasetName) => {
         if (!datasetName) return;
         setLoadingConfigs(true);
@@ -126,7 +155,9 @@ export default function Workflows({ wsEvents = [] }) {
                     container_selector: config.container_selector || '',
                     item_selectors: config.item_selectors || {},
                     link_selector: config.link_selector || '',
-                    pagination: config.pagination || null,
+                    pagination: config.pagination
+                        ? { ...config.pagination, enabled: true }
+                        : { enabled: false, method: 'selector', selector: '', max_pages: 3 },
                 }
             }
         }));
@@ -166,7 +197,17 @@ export default function Workflows({ wsEvents = [] }) {
         if (!wfName.trim() || !wfDataset.trim()) return;
         setSaving(true);
         try {
-            const payload = { name: wfName, dataset_name: wfDataset, stages };
+            // Strip UI-only enabled flag from pagination before sending
+            const payloadStages = JSON.parse(JSON.stringify(stages));
+            if (payloadStages.crawl?.config?.pagination) {
+                if (payloadStages.crawl.config.pagination.enabled) {
+                    delete payloadStages.crawl.config.pagination.enabled;
+                } else {
+                    payloadStages.crawl.config.pagination = null;
+                }
+            }
+            
+            const payload = { name: wfName, dataset_name: wfDataset, stages: payloadStages };
             const url = editingWorkflow
                 ? `${API_BASE}/api/workflows/${editingWorkflow.id}`
                 : `${API_BASE}/api/workflows`;
@@ -394,6 +435,81 @@ export default function Workflows({ wsEvents = [] }) {
                                                     />
                                                     <div className="form-hint">Paste your selectors as JSON</div>
                                                 </div>
+
+                                                {/* ── Pagination ── */}
+                                                <div style={{ marginTop: 'var(--space-md)', borderTop: '1px solid var(--border-light)', paddingTop: 'var(--space-md)' }}>
+                                                    <div className="checkbox-group" style={{ marginBottom: 'var(--space-sm)' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            id="pagination-toggle"
+                                                            checked={!!stages.crawl.config.pagination?.enabled}
+                                                            onChange={e => updateStageConfig('crawl', 'pagination', {
+                                                                ...stages.crawl.config.pagination,
+                                                                enabled: e.target.checked
+                                                            })}
+                                                        />
+                                                        <label htmlFor="pagination-toggle" style={{ fontWeight: 600, fontSize: 13 }}>
+                                                            Enable Pagination
+                                                        </label>
+                                                    </div>
+
+                                                    {stages.crawl.config.pagination?.enabled && (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                                                            <div className="grid-2">
+                                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                                    <label className="form-label">Method</label>
+                                                                    <select
+                                                                        className="form-select"
+                                                                        value={stages.crawl.config.pagination?.method || 'selector'}
+                                                                        onChange={e => updateStageConfig('crawl', 'pagination', {
+                                                                            ...stages.crawl.config.pagination,
+                                                                            method: e.target.value
+                                                                        })}
+                                                                    >
+                                                                        <option value="selector">Selector (next-page link)</option>
+                                                                        <option value="numeric">Numeric (?page=N)</option>
+                                                                    </select>
+                                                                </div>
+                                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                                    <label className="form-label">Max Pages</label>
+                                                                    <input
+                                                                        className="form-input"
+                                                                        type="number"
+                                                                        min={1}
+                                                                        max={50}
+                                                                        value={stages.crawl.config.pagination?.max_pages || 3}
+                                                                        onChange={e => updateStageConfig('crawl', 'pagination', {
+                                                                            ...stages.crawl.config.pagination,
+                                                                            max_pages: parseInt(e.target.value) || 1
+                                                                        })}
+                                                                    />
+                                                                </div>
+                                                            </div>
+
+                                                            {stages.crawl.config.pagination?.method === 'selector' && (
+                                                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                                                    <label className="form-label">Next-Page Selector</label>
+                                                                    <input
+                                                                        className="form-input mono"
+                                                                        value={stages.crawl.config.pagination?.selector || ''}
+                                                                        onChange={e => updateStageConfig('crawl', 'pagination', {
+                                                                            ...stages.crawl.config.pagination,
+                                                                            selector: e.target.value
+                                                                        })}
+                                                                        placeholder="e.g. li.next a"
+                                                                    />
+                                                                    <div className="form-hint">CSS selector for the link to the next page</div>
+                                                                </div>
+                                                            )}
+
+                                                            {stages.crawl.config.pagination?.method === 'numeric' && (
+                                                                <div className="form-hint">
+                                                                    Appends <span className="mono">?page=N</span> to the start URL automatically
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
 
@@ -593,12 +709,84 @@ export default function Workflows({ wsEvents = [] }) {
                                         </div>
                                     )}
 
-                                    {/* Last run info */}
-                                    {wf.last_run_at && !running && (
-                                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                            Last run: {new Date(wf.last_run_at).toLocaleString()}
-                                        </div>
-                                    )}
+                                    {/* ── Run History Panel ── */}
+                                    <div style={{ marginTop: 'var(--space-sm)', borderTop: '1px solid var(--border-light)', paddingTop: 'var(--space-sm)' }}>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => toggleHistory(wf.id)}
+                                            style={{ width: '100%', justifyContent: 'space-between', display: 'flex', alignItems: 'center' }}
+                                        >
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                <History size={12} />
+                                                Run History
+                                            </span>
+                                            {historyState[wf.id]?.open
+                                                ? <ChevronUp size={12} />
+                                                : <ChevronDown size={12} />}
+                                        </button>
+
+                                        {historyState[wf.id]?.open && (
+                                            <div style={{ marginTop: 'var(--space-sm)' }}>
+                                                {historyState[wf.id]?.loading ? (
+                                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
+                                                        <span className="spinner" /> Loading…
+                                                    </div>
+                                                ) : historyState[wf.id]?.runs?.length === 0 ? (
+                                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
+                                                        No runs recorded yet.
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                        {historyState[wf.id].runs.map((run) => {
+                                                            const stageResults = run.stage_results || {};
+                                                            const statusColor = run.status === 'completed'
+                                                                ? 'var(--color-success)'
+                                                                : run.status === 'failed'
+                                                                    ? 'var(--color-error)'
+                                                                    : 'var(--color-warning)';
+
+                                                            return (
+                                                                <div key={run.run_id} style={{
+                                                                    background: 'var(--bg-secondary)',
+                                                                    borderRadius: 'var(--radius-md)',
+                                                                    padding: '8px 10px',
+                                                                    fontSize: 12,
+                                                                }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                                                        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                                                                            {run.started_at ? new Date(run.started_at).toLocaleString() : '—'}
+                                                                            {run.duration && <span style={{ marginLeft: 8 }}>({run.duration})</span>}
+                                                                        </span>
+                                                                        <span style={{ fontWeight: 600, color: statusColor, fontSize: 11, textTransform: 'capitalize' }}>
+                                                                            {run.status}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                                                        {['crawl', 'processing', 'ml'].map(stage => {
+                                                                            const s = stageResults[stage];
+                                                                            if (!s) return null;
+                                                                            const ok = s.status === 'completed';
+                                                                            return (
+                                                                                <span
+                                                                                    key={stage}
+                                                                                    title={s.message || ''}
+                                                                                    className={`badge ${ok ? 'badge-success' : 'badge-error'}`}
+                                                                                    style={{ fontSize: 10 }}
+                                                                                >
+                                                                                    {ok ? <CheckCircle size={9} style={{ marginRight: 3 }} /> : <XCircle size={9} style={{ marginRight: 3 }} />}
+                                                                                    {stage === 'ml' ? 'ML' : stage.charAt(0).toUpperCase() + stage.slice(1)}
+                                                                                </span>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         );

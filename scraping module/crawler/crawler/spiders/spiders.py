@@ -1,6 +1,7 @@
 import json
 import scrapy
 import redis
+import psycopg
 from scrapy.http import Response
 from typing import Dict, Any
 from urllib.parse import quote_plus
@@ -42,7 +43,7 @@ class UniversalSpider(scrapy.Spider):
                 f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', 'password')}"
                 f"@{os.getenv('DB_HOST', 'postgres')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'scraper_db')}"
             )
-            with pg_sync.connect(db_url) as conn:
+            with psycopg.connect(db_url) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT value FROM app_config WHERE key = 'tough_sites'")
                     row = cur.fetchone()

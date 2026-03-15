@@ -2,7 +2,8 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional, Any, Optional
 
 class PaginationConfig(BaseModel):
-    selector: str
+    method: str = "selector"          # "selector" | "numeric"
+    selector: Optional[str] = None    # CSS selector for next-page link (method=selector)
     max_pages: int = 5
 
 class CrawlRequest(BaseModel):
@@ -23,3 +24,4 @@ class PipelineStep(BaseModel):
 class PipelineConfig(BaseModel):
     dataset_name: str
     steps: List[PipelineStep]
+    source: Optional[str] = "csv"
