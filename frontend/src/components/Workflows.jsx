@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Play, Plus, Trash2, Edit2, CheckCircle, XCircle,
-    Clock, ChevronDown, ChevronUp, Activity, History
+    Play, Plus, Trash2, Edit2, CheckCircle, XCircle, ChevronDown, ChevronUp, Activity, History
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -10,13 +9,13 @@ const AVAILABLE_STEPS = [
     { id: 'drop_nulls', label: 'Drop Null Rows', params: [{ key: 'subset', label: 'Columns (comma-separated)', type: 'text', default: '' }] },
     { id: 'fill_missing', label: 'Fill Missing Values', params: [{ key: 'strategy', label: 'Strategy', type: 'select', options: ['mean', 'median', 'mode', 'constant'], default: 'mean' }, { key: 'fill_value', label: 'Constant value', type: 'text', default: '0' }] },
     { id: 'remove_duplicates', label: 'Remove Duplicates', params: [{ key: 'subset', label: 'Columns (comma-separated)', type: 'text', default: '' }] },
-    { id: 'normalize', label: 'Normalize', params: [{ key: 'method', label: 'Method', type: 'select', options: ['min_max', 'z_score', 'robust'], default: 'min_max' }, { key: 'columns', label: 'Columns', type: 'text', default: '' }] },
+    { id: 'normalize', label: 'Normalize', params: [{ key: 'method', label: 'Method', type: 'select', options: ['minmax', 'z_score', 'robust'], default: 'minmax' }, { key: 'columns', label: 'Columns', type: 'text', default: '' }] },
     { id: 'encode_categorical', label: 'Encode Categorical', params: [{ key: 'method', label: 'Method', type: 'select', options: ['label', 'one_hot'], default: 'label' }, { key: 'columns', label: 'Columns', type: 'text', default: '' }] },
     { id: 'drop_columns', label: 'Drop Columns', params: [{ key: 'columns', label: 'Columns to drop', type: 'text', default: '' }] },
     { id: 'clean_numeric_column', label: 'Clean Numeric Column', params: [{ key: 'column', label: 'Column name', type: 'text', default: '' }, { key: 'strip_chars', label: 'Characters to strip (e.g. US $, out of 5 stars)', type: 'text', default: '' }] },
 ];
 
-const ML_MODELS = ['random_forest', 'logistic_regression', 'linear_regression', 'decision_tree', 'gradient_boosting', 'svm'];
+const ML_MODELS = ['random_forest', 'logistic_regression', 'linear_regression', 'gradient_boosting', 'svm'];
 
 const emptyStages = () => ({
     crawl: {
@@ -94,6 +93,11 @@ export default function Workflows({ wsEvents = [] }) {
         // Refresh list on completion/failure
         if (latest.status === 'completed' || latest.status === 'failed') {
             fetchWorkflows();
+            setRunningWorkflows(prev => {
+                const next = { ...prev };
+                delete next[wfId];
+                return next;
+            });
         }
     }, [wsEvents]);
 
@@ -169,6 +173,16 @@ export default function Workflows({ wsEvents = [] }) {
             const res = await fetch(`${API_BASE}/api/workflows`);
             const data = await res.json();
             setWorkflows(data);
+
+            setRunningWorkflows(prev => {
+                const next = { ...prev };
+                data.forEach(wf => {
+                    if (next[wf.id] && wf.last_run_status !== 'running') {
+                        delete next[wf.id];
+                    }
+                });
+                return next;
+            });
         } catch (_) { }
         finally { setLoading(false); }
     };

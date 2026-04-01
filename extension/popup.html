@@ -18,7 +18,6 @@
       overflow-y: auto;
     }
 
-    /* Header */
     .header {
       background: #2a2a2a;
       color: white;
@@ -42,12 +41,10 @@
       font-family: monospace;
     }
 
-    /* Container */
     .container {
       padding: 16px;
     }
 
-    /* Wizard Steps */
     .wizard-nav {
       display: flex;
       background: white;
@@ -91,7 +88,6 @@
       margin-bottom: 2px;
     }
 
-    /* Section Card */
     .section {
       background: white;
       border-radius: 8px;
@@ -117,7 +113,6 @@
       line-height: 1.5;
     }
 
-    /* Buttons */
     .btn {
       display: inline-block;
       padding: 10px 16px;
@@ -192,7 +187,6 @@
       gap: 8px;
     }
 
-    /* Input Fields */
     .input-group {
       margin-bottom: 12px;
     }
@@ -229,7 +223,6 @@
       margin-top: 4px;
     }
 
-    /* Info Box */
     .info-box {
       padding: 10px 12px;
       border-radius: 4px;
@@ -262,7 +255,6 @@
       color: #991b1b;
     }
 
-    /* Status Badge */
     .status-badge {
       display: inline-block;
       padding: 4px 8px;
@@ -283,7 +275,6 @@
       color: #666;
     }
 
-    /* Field List */
     .field-list {
       display: flex;
       flex-direction: column;
@@ -349,7 +340,6 @@
       color: white;
     }
 
-    /* Selector Options */
     .selector-options {
       display: flex;
       flex-direction: column;
@@ -438,7 +428,6 @@
       color: #991b1b;
     }
 
-    /* Data Preview Table */
     .preview-table {
       width: 100%;
       border-collapse: collapse;
@@ -467,7 +456,6 @@
       background: #f5f5f5;
     }
 
-    /* Empty State */
     .empty-state {
       text-align: center;
       padding: 32px 20px;
@@ -485,7 +473,6 @@
       color: #666;
     }
 
-    /* Status Message */
     .status-message {
       padding: 10px 12px;
       border-radius: 4px;
@@ -500,31 +487,20 @@
     }
 
     @keyframes slideDown {
-      from {
-        opacity: 0;
-        transform: translateY(-10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(-10px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* Utility Classes */
     .hidden {
       display: none !important;
     }
 
-    .text-center {
-      text-align: center;
-    }
-
+    .text-center { text-align: center; }
     .mt-1 { margin-top: 8px; }
     .mb-1 { margin-bottom: 8px; }
     .mt-2 { margin-top: 16px; }
     .mb-2 { margin-bottom: 16px; }
 
-    /* Configuration Summary */
     .config-summary {
       background: #fafafa;
       border: 1px solid #e0e0e0;
@@ -548,6 +524,26 @@
       color: #1a1a1a;
       font-weight: 600;
       font-family: monospace;
+    }
+
+    /* Bug 2 fix: inline max-pages input sits next to the picker button */
+    .pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .pagination-controls .input-field {
+      width: 80px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    .pagination-controls label {
+      font-size: 11px;
+      color: #666;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -594,7 +590,7 @@
           <input type="text" id="datasetName" class="input-field" placeholder="my_dataset">
           <div class="input-hint">Used to identify this scraping job</div>
         </div>
-        
+
         <div class="config-summary mt-2">
           <div class="row">
             <span class="label">Target URL:</span>
@@ -644,7 +640,7 @@
       <!-- Active Selection Panel -->
       <div id="fieldSelectionPanel" class="section hidden">
         <div class="section-title">Configure Field</div>
-        
+
         <div class="input-group">
           <label class="input-label" for="fieldNameInput">Field Name</label>
           <input type="text" id="fieldNameInput" class="input-field" placeholder="e.g., title, price, description">
@@ -674,7 +670,7 @@
       <!-- Field Management Section -->
       <div class="section">
         <div class="section-title">Configured Fields</div>
-        
+
         <div id="fieldList" class="field-list">
           <div id="emptyFieldsState" class="empty-state">
             <div class="empty-state-icon">□</div>
@@ -683,7 +679,7 @@
         </div>
 
         <button id="btnPickField" class="btn btn-primary btn-block mt-2">Pick Field Element</button>
-        
+
         <div class="btn-group mt-2">
           <button id="btnBackToContainer" class="btn btn-secondary">Back</button>
           <button id="btnPreviewData" class="btn btn-secondary">Preview Data</button>
@@ -705,6 +701,19 @@
         <div class="section-title">Pagination</div>
         <div class="section-description">
           Configure pagination to crawl multiple pages automatically.
+        </div>
+
+        <!-- Bug 2 fix: max pages input replaces the prompt() call -->
+        <div class="pagination-controls">
+          <label for="maxPagesInput">Max pages:</label>
+          <input
+            type="number"
+            id="maxPagesInput"
+            class="input-field"
+            value="5"
+            min="1"
+            max="50"
+          >
         </div>
 
         <div id="paginationStatus" class="info-box info hidden">

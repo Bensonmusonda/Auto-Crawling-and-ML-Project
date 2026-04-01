@@ -88,14 +88,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   const stored = await chrome.storage.local.get(['currentStep', 'lastSelection', 'selectionType']);
   const startStep = stored.currentStep || 'setup';
   
-  // Process any pending selection from when popup was closed
+  // Process any pending selection from when popup was closed.
+  // Bugs 1 & 4 fix: all four selection types are now replayed, not just
+  // container and field. paginationSelected and linkSelected were previously
+  // saved by background.js but silently discarded here.
   if (stored.lastSelection && stored.selectionType) {
     if (stored.selectionType === 'containerSelected') {
       handleContainerSelected(stored.lastSelection);
     } else if (stored.selectionType === 'fieldSelected') {
       handleFieldSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'paginationSelected') {
+      handlePaginationSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'linkSelected') {
+      handleLinkSelected(stored.lastSelection);
     }
-    // Clear it so we don't process it again
+    // Clear so we don't process it again on next open
     chrome.storage.local.remove(['lastSelection', 'selectionType']);
   }
   
@@ -263,8 +270,10 @@ function updatePickerButtons(mode, active) {
     pagination: elements.btnPickPagination,
     link: elements.btnPickLink
   };
-  
+
+  // Bug 3 fix: guard against null if a button element isn't found in the DOM
   Object.keys(buttons).forEach(key => {
+    if (!buttons[key]) return;
     if (key === mode && active) {
       buttons[key].textContent = 'Stop Picking';
       buttons[key].classList.remove('btn-primary');
@@ -650,13 +659,15 @@ function closePreview() {
 
 function handlePaginationSelected(data) {
   stopPicker();
-  
-  const maxPages = prompt('Maximum pages to crawl:', '5');
-  if (!maxPages) return;
-  
-  configManager.setPagination(data.selector, parseInt(maxPages) || 5, 'selector');
+
+  // Bug 2 fix: prompt() is blocked in MV3 extension popups.
+  // Read max pages from the input field added to the Advanced step instead.
+  const maxPagesInput = document.getElementById('maxPagesInput');
+  const maxPages = maxPagesInput ? (parseInt(maxPagesInput.value) || 5) : 5;
+
+  configManager.setPagination(data.selector, maxPages, 'selector');
   configManager.saveToStorage();
-  
+
   updateAdvancedStatus();
   showStatus('Pagination configured', 'success');
 }

@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-    ResponsiveContainer, Cell, RadarChart, Radar, PolarGrid,
-    PolarAngleAxis, PolarRadiusAxis
+    ResponsiveContainer, Cell
 } from 'recharts';
 import {
-    Play, Clock, CheckCircle, Database, Settings, ArrowRight, X
+    Play, Database, ArrowRight, X
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
+import PredictionTester from './PredictionTester';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -22,6 +22,31 @@ const METRIC_COLORS = {
     rmse: '#555555',
 };
 
+
+function getPrimaryMetric(model) {
+    if (!model?.metrics) return { label: '—', value: null };
+    const m = model.metrics;
+    if (model.task_type === 'regression') {
+        if (m.r2_score != null) return { label: 'R²', value: m.r2_score.toFixed(4) };
+        if (m.mae != null) return { label: 'MAE', value: m.mae.toFixed(4) };
+        return { label: '—', value: null };
+    }
+    // classification
+    if (m.accuracy != null) return { label: 'Accuracy', value: (m.accuracy * 100).toFixed(1) + '%' };
+    return { label: '—', value: null };
+}
+
+function getSecondaryMetric(model) {
+    if (!model?.metrics) return { label: '—', value: null };
+    const m = model.metrics;
+    if (model.task_type === 'regression') {
+        if (m.rmse != null) return { label: 'RMSE', value: m.rmse.toFixed(4) };
+        return { label: '—', value: null };
+    }
+    if (m.f1_score != null) return { label: 'F1', value: (m.f1_score * 100).toFixed(1) + '%' };
+    return { label: '—', value: null };
+}
+
 export default function MLTraining() {
     const [models, setModels] = useState([]);
     const [selectedModel, setSelectedModel] = useState('');
@@ -31,22 +56,30 @@ export default function MLTraining() {
     const [autoTune, setAutoTune] = useState(true);
     const [params, setParams] = useState({});
     const [training, setTraining] = useState(false);
-    const [jobId, setJobId] = useState(null);
     const [result, setResult] = useState(null);
+    const [jobId, setJobId] = useState(null);
     const [trainedModels, setTrainedModels] = useState([]);
     const [activeView, setActiveView] = useState('configure');
     const [logs, setLogs] = useState([]);
     const [compareIds, setCompareIds] = useState([]);
     const [detailModel, setDetailModel] = useState(null);
+    const [availableColumns, setAvailableColumns] = useState([]);
 
     useEffect(() => {
         fetchModels();
         fetchTrainedModels();
     }, []);
 
-    const [availableColumns, setAvailableColumns] = useState([]);
+    useEffect(() => {
+        if (!jobId || !training) return;
+        const interval = setInterval(() => checkJobStatus(jobId), 2000);
+        return () => clearInterval(interval);
+    }, [jobId, training]);
 
-    // Add this function:
+    const addLog = (msg, type = 'info') => {
+        setLogs(prev => [...prev, { message: msg, type, time: new Date().toLocaleTimeString() }]);
+    };
+
     const fetchColumns = async (path) => {
         try {
             const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
@@ -55,17 +88,6 @@ export default function MLTraining() {
         } catch (_) {
             setAvailableColumns([]);
         }
-    };
-
-    useEffect(() => {
-        if (jobId && training) {
-            const interval = setInterval(() => checkJobStatus(jobId), 2000);
-            return () => clearInterval(interval);
-        }
-    }, [jobId, training]);
-
-    const addLog = (msg, type = 'info') => {
-        setLogs(prev => [...prev, { message: msg, type, time: new Date().toLocaleTimeString() }]);
     };
 
     const fetchModels = async () => {
@@ -149,8 +171,21 @@ export default function MLTraining() {
                 setActiveView('results');
                 addLog('Training complete', 'success');
                 fetchTrainedModels();
+            } else if (res.status === 404) {
+                // Still running — not persisted yet, keep polling
+            } else {
+                // Real error — stop polling and surface it
+                const errData = await res.json().catch(() => ({}));
+                setTraining(false);
+                setJobId(null);
+                addLog(`Training failed: ${errData.detail || `HTTP ${res.status}`}`, 'error');
             }
-        } catch (e) { /* Still training */ }
+        } catch (e) {
+            // Network error — stop polling
+            setTraining(false);
+            setJobId(null);
+            addLog(`Connection error while checking status: ${e.message}`, 'error');
+        }
     };
 
     const toggleCompare = (jobId) => {
@@ -161,7 +196,6 @@ export default function MLTraining() {
         );
     };
 
-    // Prepare visualization data
     const getMetricsChartData = (metrics) => {
         if (!metrics) return [];
         return Object.entries(metrics)
@@ -214,29 +248,11 @@ export default function MLTraining() {
 
             {/* Sub-navigation */}
             <div className="tab-bar">
-                <button
-                    className={`tab-btn ${activeView === 'configure' ? 'active' : ''}`}
-                    onClick={() => setActiveView('configure')}
-                >
-                    Configure
-                </button>
-                <button
-                    className={`tab-btn ${activeView === 'results' ? 'active' : ''}`}
-                    onClick={() => setActiveView('results')}
-                >
-                    Results
-                </button>
-                <button
-                    className={`tab-btn ${activeView === 'history' ? 'active' : ''}`}
-                    onClick={() => setActiveView('history')}
-                >
-                    History
-                </button>
+                <button className={`tab-btn ${activeView === 'configure' ? 'active' : ''}`} onClick={() => setActiveView('configure')}>Configure</button>
+                <button className={`tab-btn ${activeView === 'results' ? 'active' : ''}`} onClick={() => setActiveView('results')}>Results</button>
+                <button className={`tab-btn ${activeView === 'history' ? 'active' : ''}`} onClick={() => setActiveView('history')}>History</button>
                 {compareIds.length >= 2 && (
-                    <button
-                        className={`tab-btn ${activeView === 'compare' ? 'active' : ''}`}
-                        onClick={() => setActiveView('compare')}
-                    >
+                    <button className={`tab-btn ${activeView === 'compare' ? 'active' : ''}`} onClick={() => setActiveView('compare')}>
                         Compare ({compareIds.length})
                     </button>
                 )}
@@ -459,18 +475,20 @@ export default function MLTraining() {
                                 </div>
                             </div>
 
-                            {/* Metrics Chart */}
+                            {/* Metrics + Feature Importance */}
                             <div className="grid-2">
                                 <div className="card">
                                     <div className="card-header">
                                         <span className="card-title">Evaluation Metrics</span>
                                     </div>
                                     <div className="card-body">
-                                        <div className="chart-container">
+                                        <div className="chart-container" style={{ minHeight: 300 }}>
                                             <ResponsiveContainer width="100%" height="100%">
+                                                {/* Bug 3 fix: domain changed from [0,1] to [0,'auto']
+                                                    so regression metrics like MSE/RMSE are not clipped */}
                                                 <BarChart data={getMetricsChartData(detailModel.metrics)} layout="vertical">
                                                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e2e4" />
-                                                    <XAxis type="number" domain={[0, 1]} tick={{ fontSize: 11 }} />
+                                                    <XAxis type="number" domain={[0, 'auto']} tick={{ fontSize: 11 }} />
                                                     <YAxis
                                                         type="category"
                                                         dataKey="name"
@@ -483,11 +501,7 @@ export default function MLTraining() {
                                                             props.payload.rawValue?.toFixed(4),
                                                             props.payload.name
                                                         ]}
-                                                        contentStyle={{
-                                                            fontSize: 12,
-                                                            border: '1px solid #e2e2e4',
-                                                            borderRadius: 4,
-                                                        }}
+                                                        contentStyle={{ fontSize: 12, border: '1px solid #e2e2e4', borderRadius: 4 }}
                                                     />
                                                     <Bar dataKey="value" radius={[0, 2, 2, 0]} barSize={20}>
                                                         {getMetricsChartData(detailModel.metrics).map((entry, i) => (
@@ -498,7 +512,6 @@ export default function MLTraining() {
                                             </ResponsiveContainer>
                                         </div>
 
-                                        {/* Metric values list */}
                                         <div style={{ marginTop: 'var(--space-md)' }}>
                                             {Object.entries(detailModel.metrics)
                                                 .filter(([, v]) => typeof v === 'number')
@@ -528,46 +541,25 @@ export default function MLTraining() {
                                                 <BarChart data={getFeatureImportanceData(detailModel.feature_importance)} layout="vertical">
                                                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e2e4" />
                                                     <XAxis type="number" tick={{ fontSize: 11 }} unit="%" />
-                                                    <YAxis
-                                                        type="category"
-                                                        dataKey="name"
-                                                        width={120}
-                                                        tick={{ fontSize: 10 }}
-                                                    />
+                                                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 10 }} />
                                                     <Tooltip
                                                         formatter={(val) => [`${val}%`, 'Importance']}
-                                                        contentStyle={{
-                                                            fontSize: 12,
-                                                            border: '1px solid #e2e2e4',
-                                                            borderRadius: 4,
-                                                        }}
+                                                        contentStyle={{ fontSize: 12, border: '1px solid #e2e2e4', borderRadius: 4 }}
                                                     />
                                                     <Bar dataKey="value" fill="#111111" radius={[0, 2, 2, 0]} barSize={14} />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         </div>
 
-                                        {/* Feature list */}
                                         <div style={{ marginTop: 'var(--space-md)' }}>
                                             {getFeatureImportanceData(detailModel.feature_importance).map(f => (
                                                 <div key={f.name} className="flex-between" style={{ padding: '3px 0' }}>
                                                     <span className="mono" style={{ fontSize: 11 }}>{f.name}</span>
                                                     <div className="flex-row" style={{ gap: 8 }}>
-                                                        <div style={{
-                                                            width: 60, height: 4,
-                                                            background: 'var(--bg-tertiary)',
-                                                            borderRadius: 2, overflow: 'hidden'
-                                                        }}>
-                                                            <div style={{
-                                                                width: `${f.value}%`,
-                                                                height: '100%',
-                                                                background: 'var(--text-primary)',
-                                                                borderRadius: 2
-                                                            }} />
+                                                        <div style={{ width: 60, height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
+                                                            <div style={{ width: `${f.value}%`, height: '100%', background: 'var(--text-primary)', borderRadius: 2 }} />
                                                         </div>
-                                                        <span className="mono" style={{ fontSize: 11, width: 40, textAlign: 'right' }}>
-                                                            {f.value}%
-                                                        </span>
+                                                        <span className="mono" style={{ fontSize: 11, width: 40, textAlign: 'right' }}>{f.value}%</span>
                                                     </div>
                                                 </div>
                                             ))}
@@ -576,7 +568,7 @@ export default function MLTraining() {
                                 </div>
                             </div>
 
-                            {/* Hyperparameters Used */}
+                            {/* Hyperparameters */}
                             {detailModel.hyperparameters && (
                                 <div className="card" style={{ marginTop: 'var(--space-md)' }}>
                                     <div className="card-header">
@@ -586,10 +578,7 @@ export default function MLTraining() {
                                         <div className="data-table-wrapper">
                                             <table className="data-table">
                                                 <thead>
-                                                    <tr>
-                                                        <th>Parameter</th>
-                                                        <th>Value</th>
-                                                    </tr>
+                                                    <tr><th>Parameter</th><th>Value</th></tr>
                                                 </thead>
                                                 <tbody>
                                                     {Object.entries(detailModel.hyperparameters).map(([k, v]) => (
@@ -604,6 +593,7 @@ export default function MLTraining() {
                                     </div>
                                 </div>
                             )}
+                            <PredictionTester model={detailModel} />
                         </>
                     )}
                 </div>
@@ -614,10 +604,7 @@ export default function MLTraining() {
                 <div>
                     {compareIds.length >= 2 && (
                         <div style={{ marginBottom: 'var(--space-md)' }}>
-                            <button
-                                className="btn btn-primary"
-                                onClick={() => setActiveView('compare')}
-                            >
+                            <button className="btn btn-primary" onClick={() => setActiveView('compare')}>
                                 Compare {compareIds.length} Models <ArrowRight size={14} />
                             </button>
                         </div>
@@ -635,8 +622,8 @@ export default function MLTraining() {
                                         <th style={{ width: 30 }}></th>
                                         <th>Model</th>
                                         <th>Type</th>
-                                        <th>Accuracy</th>
-                                        <th>F1</th>
+                                        <th>Primary</th>
+                                        <th>Secondary</th>
                                         <th>Train</th>
                                         <th>Test</th>
                                         <th>Features</th>
@@ -645,48 +632,48 @@ export default function MLTraining() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {trainedModels.map(m => (
-                                        <tr key={m.job_id}>
-                                            <td>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={compareIds.includes(m.job_id)}
-                                                    onChange={() => toggleCompare(m.job_id)}
-                                                    style={{ accentColor: '#111' }}
-                                                />
-                                            </td>
-                                            <td style={{ fontWeight: 500, textTransform: 'capitalize' }}>
-                                                {m.model_type.replace(/_/g, ' ')}
-                                            </td>
-                                            <td>
-                                                <span className="badge badge-neutral">{m.task_type}</span>
-                                            </td>
-                                            <td className="mono" style={{ fontWeight: 600 }}>
-                                                {m.metrics.accuracy != null
-                                                    ? (m.metrics.accuracy * 100).toFixed(1) + '%'
-                                                    : '—'}
-                                            </td>
-                                            <td className="mono">
-                                                {m.metrics.f1_score != null
-                                                    ? (m.metrics.f1_score * 100).toFixed(1) + '%'
-                                                    : '—'}
-                                            </td>
-                                            <td className="mono">{m.n_samples_train}</td>
-                                            <td className="mono">{m.n_samples_test}</td>
-                                            <td className="mono">{m.n_features}</td>
-                                            <td style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                                                {new Date(m.created_at).toLocaleDateString()}
-                                            </td>
-                                            <td>
-                                                <button
-                                                    className="btn btn-secondary btn-sm"
-                                                    onClick={() => { setDetailModel(m); setActiveView('results'); }}
-                                                >
-                                                    View
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {trainedModels.map(m => {
+                                        const primary = getPrimaryMetric(m);
+                                        const secondary = getSecondaryMetric(m);
+                                        return (
+                                            <tr key={m.job_id}>
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={compareIds.includes(m.job_id)}
+                                                        onChange={() => toggleCompare(m.job_id)}
+                                                        style={{ accentColor: '#111' }}
+                                                    />
+                                                </td>
+                                                <td style={{ fontWeight: 500, textTransform: 'capitalize' }}>
+                                                    {m.model_type.replace(/_/g, ' ')}
+                                                </td>
+                                                <td>
+                                                    <span className="badge badge-neutral">{m.task_type}</span>
+                                                </td>
+                                                <td className="mono" style={{ fontWeight: 600 }} title={primary.label}>
+                                                    {primary.value ?? '—'}
+                                                </td>
+                                                <td className="mono" title={secondary.label}>
+                                                    {secondary.value ?? '—'}
+                                                </td>
+                                                <td className="mono">{m.n_samples_train}</td>
+                                                <td className="mono">{m.n_samples_test}</td>
+                                                <td className="mono">{m.n_features}</td>
+                                                <td style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                                                    {new Date(m.created_at).toLocaleDateString()}
+                                                </td>
+                                                <td>
+                                                    <button
+                                                        className="btn btn-secondary btn-sm"
+                                                        onClick={() => { setDetailModel(m); setActiveView('results'); }}
+                                                    >
+                                                        View
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>

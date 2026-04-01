@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Wrench, Plus, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns
+    Wrench, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
 
@@ -37,7 +37,7 @@ const AVAILABLE_STEPS = [
         label: 'Normalize',
         description: 'Scale numeric columns to a range',
         params: [
-            { key: 'method', label: 'Method', type: 'select', options: ['min_max', 'z_score', 'robust'], default: 'min_max' },
+            { key: 'method', label: 'Method', type: 'select', options: ['minmax', 'z_score', 'robust'], default: 'minmax' },
             { key: 'columns', label: 'Columns (blank for all numeric)', type: 'multicolumn', default: '' }
         ]
     },
@@ -72,6 +72,7 @@ const AVAILABLE_STEPS = [
         description: 'Remove rows with empty or specific values',
         params: [
             { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'exclude', label: 'Values to exclude (comma-separated)', type: 'text', default: '' }
         ]
     },
     {
@@ -223,10 +224,25 @@ export default function DataProcessing() {
         }));
     };
 
-    const connectWebSocket = () => {
+    // Bug 1 fix: connectWebSocket now accepts the job_id and sends it
+    // immediately in onopen so the server starts forwarding events for
+    // this specific job. A new connection is opened per run and closed
+    // when the job completes or fails.
+    const connectWebSocket = (targetJobId) => {
+        // Close any previous connection from a prior run
+        if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+        }
+
         try {
             const ws = new WebSocket('ws://localhost:8000/websocket/crawl_events');
             wsRef.current = ws;
+
+            ws.onopen = () => {
+                ws.send(targetJobId);
+            };
+
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -234,19 +250,22 @@ export default function DataProcessing() {
                         if (data.status === 'completed') {
                             setProcessing(false);
                             setResult(data);
-                            addLog(`Processing complete. ${data.total_rows} rows, ${data.columns?.length} columns`, 'success');
+                            addLog(`Processing complete — ${data.total_rows} rows, ${data.columns?.length} columns`, 'success');
+                            ws.close();
                         } else if (data.status === 'failed') {
                             setProcessing(false);
                             setError(data.error);
                             addLog(`Processing failed: ${data.error}`, 'error');
+                            ws.close();
                         } else if (data.status === 'started') {
-                            addLog('Pipeline execution started...', 'info');
+                            addLog('Pipeline execution started…', 'info');
                         }
                     }
                 } catch (_) { }
             };
+
             ws.onerror = () => addLog('WebSocket connection error', 'error');
-            ws.onclose = () => addLog('WebSocket disconnected', 'info');
+            ws.onclose = () => { /* intentional close on completion is fine */ };
         } catch (_) {
             addLog('Cannot connect to WebSocket', 'error');
         }
@@ -261,15 +280,25 @@ export default function DataProcessing() {
         setResult(null);
         setError(null);
         addLog(`Submitting pipeline: ${pipeline.length} steps on "${datasetName}"`, 'info');
-        connectWebSocket();
 
         try {
-            const steps = pipeline.map(s => ({
-                step: s.step,
-                params: Object.fromEntries(
+            // Bug 2 fix: encode_categorical with method='one_hot' is remapped
+            // to step id 'one_hot' so the registry routes it correctly.
+            // method='label' stays as 'label_encode' (via encode_categorical alias).
+            const steps = pipeline.map(s => {
+                let stepId = s.step;
+                const params = Object.fromEntries(
                     Object.entries(s.params).filter(([, v]) => v !== '')
-                )
-            }));
+                );
+
+                if (stepId === 'encode_categorical') {
+                    stepId = params.method === 'one_hot' ? 'one_hot' : 'label_encode';
+                    // method param is a UI-only concern — don't send it to backend
+                    delete params.method;
+                }
+
+                return { step: stepId, params };
+            });
 
             const response = await fetch(`${API_BASE}/api/process`, {
                 method: 'POST',
@@ -285,6 +314,11 @@ export default function DataProcessing() {
             const data = await response.json();
             setJobId(data.job_id);
             addLog(`Job submitted: ${data.job_id}`, 'success');
+
+            // Bug 1 fix: open WS after we have the job_id so we can
+            // send it immediately in onopen
+            connectWebSocket(data.job_id);
+
         } catch (err) {
             setProcessing(false);
             setError(err.message);

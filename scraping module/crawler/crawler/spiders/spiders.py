@@ -38,6 +38,8 @@ class UniversalSpider(scrapy.Spider):
 
         # ScraperAPI config
         self.scraper_api_key = os.getenv("SCRAPERAPI_KEY")
+        
+        # Load tough_sites, playwright_sites, and hybrid_sites from database
         try:
             db_url = (
                 f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', 'password')}"
@@ -45,30 +47,64 @@ class UniversalSpider(scrapy.Spider):
             )
             with psycopg.connect(db_url) as conn:
                 with conn.cursor() as cur:
+                    # Get tough_sites
                     cur.execute("SELECT value FROM app_config WHERE key = 'tough_sites'")
                     row = cur.fetchone()
                     self.tough_sites = row[0] if row else ['amazon.com', 'ebay.com', 'walmart.com']
+                    
+                    # Get playwright_sites
+                    cur.execute("SELECT value FROM app_config WHERE key = 'playwright_sites'")
+                    row = cur.fetchone()
+                    self.playwright_sites = row[0] if row else []
+                    
+                    # Get hybrid_sites (ScraperAPI with JS instructions)
+                    cur.execute("SELECT value FROM app_config WHERE key = 'hybrid_sites'")
+                    row = cur.fetchone()
+                    self.hybrid_sites = row[0] if row else []
+                    
         except Exception as e:
             self.tough_sites = ['amazon.com', 'ebay.com', 'walmart.com']
-            self.logger.warning(f"[Spider] Could not load tough_sites from DB, using defaults: {e}")
+            self.playwright_sites = []
+            self.hybrid_sites = []
+            self.logger.warning(f"[Spider] Could not load config from DB, using defaults: {e}")
+    
     # -------------------------
     # Request Helpers
     # -------------------------
 
-    def build_scraperapi_url(self, target_url: str) -> str:
+    def build_scraperapi_url(self, target_url: str, wait_selector: str = None) -> str:
+        """
+        Build ScraperAPI URL with optional wait_for_selector.
+        
+        Args:
+            target_url: The URL to scrape
+            wait_selector: CSS selector to wait for before returning HTML
+        """
         encoded_url = quote_plus(target_url)
-        return (
-            f"https://api.scraperapi.com/"
-            f"?api_key={self.scraper_api_key}"
-            f"&url={encoded_url}"
-            f"&render=true"
-        )
+        params = [
+            f"api_key={self.scraper_api_key}",
+            f"url={encoded_url}",
+            "render=true"
+        ]
+        
+        # Add wait_for_selector if provided (for hybrid sites)
+        if wait_selector:
+            params.append(f"wait_for_selector={quote_plus(wait_selector)}")
+        
+        return "https://api.scraperapi.com/?" + "&".join(params)
 
     def should_use_scraperapi(self, url: str) -> bool:
         return (
             self.scraper_api_key is not None
             and any(domain in url for domain in self.tough_sites)
         )
+    
+    def should_use_playwright(self, url: str) -> bool:
+        return any(domain in url for domain in self.playwright_sites)
+    
+    def should_use_hybrid(self, url: str) -> bool:
+        """Check if URL should use ScraperAPI with wait_for_selector"""
+        return any(domain in url for domain in self.hybrid_sites)
 
     # -------------------------
     # Start Requests
@@ -76,8 +112,54 @@ class UniversalSpider(scrapy.Spider):
 
     def start_requests(self):
         for url in self.start_urls:
+            
+            # Priority: Playwright > Hybrid (ScraperAPI + wait) > ScraperAPI > Regular
+            if self.should_use_playwright(url):
+                self.logger.warning(f"🎭 Using Playwright for: {url}")
+                
+                yield scrapy.Request(
+                    url,
+                    callback=self.parse,
+                    dont_filter=True,
+                    meta={
+                        "playwright": True,
+                        "playwright_include_page": True,
+                        "playwright_page_methods": [
+                            ("wait_for_timeout", 3000),
+                            ("wait_for_selector", self.container_selector or "body"),
+                        ],
+                        "original_url": url,
+                        "using_playwright": True,
+                        "using_hybrid": False,
+                        "using_scraperapi": False
+                    },
+                    errback=self.errback_playwright
+                )
+            
+            elif self.should_use_hybrid(url):
+                # Use ScraperAPI with wait_for_selector
+                api_url = self.build_scraperapi_url(
+                    url, 
+                    wait_selector=self.container_selector
+                )
 
-            if self.should_use_scraperapi(url):
+                self.logger.warning(f"🔧 Using Hybrid (ScraperAPI + wait) for: {url}")
+                self.logger.warning(f"⏳ Waiting for selector: {self.container_selector}")
+
+                yield scrapy.Request(
+                    api_url,
+                    callback=self.parse,
+                    dont_filter=True,
+                    meta={
+                        "original_url": url,
+                        "using_hybrid": True,
+                        "using_scraperapi": False,
+                        "using_playwright": False
+                    }
+                )
+                
+            elif self.should_use_scraperapi(url):
+                # Regular ScraperAPI without wait_for_selector
                 api_url = self.build_scraperapi_url(url)
 
                 self.logger.warning(f"🤖 Using ScraperAPI for: {url}")
@@ -88,16 +170,21 @@ class UniversalSpider(scrapy.Spider):
                     dont_filter=True,
                     meta={
                         "original_url": url,
-                        "using_scraperapi": True
+                        "using_scraperapi": True,
+                        "using_hybrid": False,
+                        "using_playwright": False
                     }
                 )
             else:
+                # Regular Scrapy request
                 yield scrapy.Request(
                     url,
                     callback=self.parse,
                     meta={
                         "original_url": url,
-                        "using_scraperapi": False
+                        "using_scraperapi": False,
+                        "using_hybrid": False,
+                        "using_playwright": False
                     }
                 )
 
@@ -110,12 +197,15 @@ class UniversalSpider(scrapy.Spider):
 
         original_url = response.meta.get("original_url", response.url)
         using_scraperapi = response.meta.get("using_scraperapi", False)
+        using_hybrid = response.meta.get("using_hybrid", False)
+        using_playwright = response.meta.get("using_playwright", False)
 
         self.logger.info(f"=== RESPONSE DEBUG ===")
         self.logger.info(f"URL: {original_url}")
-        self.logger.info(f"Proxy URL: {response.url}")
+        self.logger.info(f"Actual URL: {response.url}")
         self.logger.info(f"Status: {response.status}")
         self.logger.info(f"Body length: {len(response.body)}")
+        self.logger.info(f"Playwright: {using_playwright}, Hybrid: {using_hybrid}, ScraperAPI: {using_scraperapi}")
         self.logger.info(f"======================")
 
         if self.crawl_type == "flat":
@@ -156,7 +246,7 @@ class UniversalSpider(scrapy.Spider):
                 yield response.follow(
                     url,
                     callback=self.parse_detail,
-                    meta=response.meta  # Preserve scraperapi context
+                    meta=response.meta  # Preserve context
                 )
 
     def parse_detail(self, response: Response):
@@ -188,6 +278,8 @@ class UniversalSpider(scrapy.Spider):
 
         method = self.pagination.get("method", "selector")
         using_scraperapi = response.meta.get("using_scraperapi", False)
+        using_hybrid = response.meta.get("using_hybrid", False)
+        using_playwright = response.meta.get("using_playwright", False)
 
         if method == "numeric":
             self.list_pages_count += 1
@@ -195,7 +287,7 @@ class UniversalSpider(scrapy.Spider):
             base_url = self.config["start_url"].split('?')[0]
             next_url = f"{base_url}?page={self.list_pages_count}"
 
-        else:
+        else:  # selector-based pagination
             selector = self.pagination.get("selector")
             if not selector:
                 return
@@ -204,23 +296,67 @@ class UniversalSpider(scrapy.Spider):
                        response.css(f"{selector} a::attr(href)").get()
 
             if not next_url:
+                self.logger.info("No next page link found - end of pagination")
                 return
 
             self.list_pages_count += 1
 
-        # Route pagination through ScraperAPI if necessary
-        if using_scraperapi and self.should_use_scraperapi(next_url):
-            api_url = self.build_scraperapi_url(next_url)
+        # Route pagination based on what was used for first request
+        if using_playwright:
+            yield scrapy.Request(
+                next_url,
+                callback=self.parse,
+                meta={
+                    "playwright": True,
+                    "playwright_include_page": True,
+                    "playwright_page_methods": [
+                        ("wait_for_timeout", 3000),
+                        ("wait_for_selector", self.container_selector or "body"),
+                    ],
+                    "original_url": next_url,
+                    "using_playwright": True,
+                    "using_hybrid": False,
+                    "using_scraperapi": False
+                },
+                errback=self.errback_playwright
+            )
+        elif using_hybrid:
+            # Use ScraperAPI with wait_for_selector for pagination
+            api_url = self.build_scraperapi_url(
+                next_url,
+                wait_selector=self.container_selector
+            )
+
+            self.logger.info(f"Following pagination (hybrid) to: {next_url}")
 
             yield scrapy.Request(
                 api_url,
                 callback=self.parse,
                 meta={
                     "original_url": next_url,
-                    "using_scraperapi": True
+                    "using_hybrid": True,
+                    "using_scraperapi": False,
+                    "using_playwright": False
+                }
+            )
+        elif using_scraperapi and self.should_use_scraperapi(next_url):
+            # Regular ScraperAPI without wait_for_selector
+            api_url = self.build_scraperapi_url(next_url)
+
+            self.logger.info(f"Following pagination (ScraperAPI) to: {next_url}")
+
+            yield scrapy.Request(
+                api_url,
+                callback=self.parse,
+                meta={
+                    "original_url": next_url,
+                    "using_scraperapi": True,
+                    "using_hybrid": False,
+                    "using_playwright": False
                 }
             )
         else:
+            # Regular Scrapy follow
             yield response.follow(
                 next_url,
                 callback=self.parse,
@@ -235,10 +371,19 @@ class UniversalSpider(scrapy.Spider):
         item = {}
 
         for field, sel in self.item_selectors.items():
-
+            
+            # Handle XPath
             if sel.startswith('/') or sel.startswith('./'):
+                # XPath: check if it already has text() extraction
+                if 'text()' not in sel:
+                    sel = f"{sel}/text()"
                 results = selector.xpath(sel).getall()
+            
+            # Handle CSS
             else:
+                # CSS: auto-append ::text if not present
+                if '::text' not in sel and '::attr' not in sel:
+                    sel = f"{sel}::text"
                 results = selector.css(sel).getall()
 
             if results:
@@ -251,7 +396,7 @@ class UniversalSpider(scrapy.Spider):
         item.update({
             "job_id": self.job_id,
             "dataset_name": self.dataset_name,
-            "url": url  # Now stores real source URL
+            "url": url
         })
 
         return item

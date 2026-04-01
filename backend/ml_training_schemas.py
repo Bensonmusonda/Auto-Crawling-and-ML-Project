@@ -56,7 +56,6 @@ class ModelTrainingResponse(BaseModel):
 
 
 class ModelMetricsResponse(BaseModel):
-    """Response schema for model metrics"""
     job_id: str
     model_type: str
     task_type: str
@@ -67,10 +66,11 @@ class ModelMetricsResponse(BaseModel):
     n_samples_train: int
     n_samples_test: int
     n_features: int
+    feature_names: Optional[List[str]] = None      
+    target_column: Optional[str] = None
     created_at: str
 
 
 class ModelListFromDBResponse(BaseModel):
-    """Response schema for listing models from database"""
     models: List[ModelMetricsResponse]
     total: int

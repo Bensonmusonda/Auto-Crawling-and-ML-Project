@@ -18,7 +18,7 @@ class ModelRegistry:
     Registry that maps model names to their strategies and UI manifests.
     The UI manifest defines parameter types for frontend rendering.
     """
-    
+
     def __init__(self):
         self._models = {
             # Classification Models
@@ -179,11 +179,6 @@ class ModelRegistry:
                         "type": "boolean",
                         "default": True,
                         "label": "Fit Intercept"
-                    },
-                    "normalize": {
-                        "type": "boolean",
-                        "default": False,
-                        "label": "Normalize Features"
                     }
                 }
             },
@@ -213,83 +208,48 @@ class ModelRegistry:
                 }
             }
         }
-    
+
     def get_model_info(self, model_name: str) -> Dict[str, Any]:
-        """Get complete model information including strategy and UI manifest"""
         if model_name not in self._models:
             raise ValueError(f"Model '{model_name}' not found in registry")
         return self._models[model_name]
-    
+
     def get_strategy(self, model_name: str):
-        """Get the strategy class for a given model"""
         return self.get_model_info(model_name)["strategy"]
-    
+
     def get_ui_manifest(self, model_name: str) -> Dict[str, Any]:
-        """Get UI manifest for frontend rendering"""
         return self.get_model_info(model_name)["ui_manifest"]
-    
+
     def get_task_type(self, model_name: str) -> str:
-        """Get task type (classification or regression)"""
         return self.get_model_info(model_name)["task_type"]
-    
+
     def list_models(self) -> List[str]:
-        """List all available model names"""
         return list(self._models.keys())
-    
+
     def list_models_by_type(self, task_type: str) -> List[str]:
-        """List models filtered by task type"""
         return [
             name for name, info in self._models.items()
             if info["task_type"] == task_type
         ]
-    
+
     def suggest_hyperparameters(self, model_name: str, n_samples: int, n_features: int) -> Dict[str, Any]:
-        """
-        Auto-suggest hyperparameters based on dataset characteristics.
-        
-        Args:
-            model_name: Name of the model
-            n_samples: Number of samples in dataset
-            n_features: Number of features in dataset
-            
-        Returns:
-            Dictionary of suggested hyperparameters
-        """
         manifest = self.get_ui_manifest(model_name)
         suggestions = {}
-        
-        # Apply heuristics based on dataset size
+
         if model_name == "random_forest":
-            # More trees for larger datasets
-            if n_samples > 10000:
-                suggestions["n_estimators"] = 200
-            elif n_samples > 1000:
-                suggestions["n_estimators"] = 100
-            else:
-                suggestions["n_estimators"] = 50
-            
-            # Deeper trees for datasets with more features
-            if n_features > 20:
-                suggestions["max_depth"] = 15
-            else:
-                suggestions["max_depth"] = 10
-            
+            suggestions["n_estimators"] = 200 if n_samples > 10000 else 100 if n_samples > 1000 else 50
+            suggestions["max_depth"] = 15 if n_features > 20 else 10
             suggestions["min_samples_split"] = max(2, n_samples // 1000)
             suggestions["min_samples_leaf"] = max(1, n_samples // 2000)
             suggestions["criterion"] = "gini"
             suggestions["bootstrap"] = True
-            
+
         elif model_name == "logistic_regression":
-            # Adjust regularization based on features
-            if n_features > n_samples:
-                suggestions["C"] = 0.1  # Stronger regularization
-            else:
-                suggestions["C"] = 1.0
-            
+            suggestions["C"] = 0.1 if n_features > n_samples else 1.0
             suggestions["penalty"] = "l2"
             suggestions["max_iter"] = 1000 if n_samples < 10000 else 2000
             suggestions["solver"] = "lbfgs"
-            
+
         elif model_name == "gradient_boosting":
             if n_samples > 10000:
                 suggestions["n_estimators"] = 150
@@ -297,31 +257,26 @@ class ModelRegistry:
             else:
                 suggestions["n_estimators"] = 100
                 suggestions["learning_rate"] = 0.1
-            
             suggestions["max_depth"] = 3
             suggestions["subsample"] = 0.8 if n_samples > 1000 else 1.0
-            
+
         elif model_name == "svm":
             suggestions["C"] = 1.0
             suggestions["kernel"] = "rbf" if n_features < 50 else "linear"
             suggestions["gamma"] = "scale"
-            
+
         elif model_name == "linear_regression":
+            # Bug 4 fix: removed 'normalize' suggestion — param no longer exists
             suggestions["fit_intercept"] = True
-            suggestions["normalize"] = False
-            
+
         elif model_name == "ridge_regression":
-            if n_features > n_samples:
-                suggestions["alpha"] = 10.0
-            else:
-                suggestions["alpha"] = 1.0
-            
+            suggestions["alpha"] = 10.0 if n_features > n_samples else 1.0
             suggestions["fit_intercept"] = True
             suggestions["solver"] = "auto"
-        
+
         # Fill in defaults for any missing parameters
         for param, config in manifest.items():
             if param not in suggestions:
                 suggestions[param] = config["default"]
-        
+
         return suggestions

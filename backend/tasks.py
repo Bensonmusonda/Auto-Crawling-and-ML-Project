@@ -282,6 +282,7 @@ def run_workflow(self, workflow_id: int):
                     WHERE id = %s
                 """, (status, workflow_id))
                 conn.commit()
+    timeout = 3600
 
     try:
         # Load workflow
@@ -310,7 +311,7 @@ def run_workflow(self, workflow_id: int):
             crawl_task = celery_app.send_task(
                 'tasks.run_crawl_task',
                 args=[crawl_config],
-                queue='default'
+                queue='celery'
             )
             crawl_job_id = crawl_task.id
             update_workflow_run(job_id, crawl_job_id=crawl_job_id)
@@ -319,7 +320,6 @@ def run_workflow(self, workflow_id: int):
             pubsub = r.pubsub()
             pubsub.subscribe('crawl_events')
             crawl_done = False
-            timeout = 3600
             start = time.time()
 
             for message in pubsub.listen():

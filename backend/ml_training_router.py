@@ -241,7 +241,7 @@ async def get_model_details(job_id: str):
                     SELECT 
                         job_id, model_type, task_type, metrics,
                         feature_importance, hyperparameters, model_path,
-                        n_samples_train, n_samples_test, n_features,
+                        n_samples_train, n_samples_test, n_features, feature_names,
                         created_at
                     FROM model_registry
                     WHERE job_id = %s
@@ -263,6 +263,7 @@ async def get_model_details(job_id: str):
                     "n_samples_train": model["n_samples_train"],
                     "n_samples_test": model["n_samples_test"],
                     "n_features": model["n_features"],
+                    "feature_names": model["feature_names"],
                     "created_at": model["created_at"].isoformat()
                 }
     except HTTPException:

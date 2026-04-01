@@ -1,10 +1,22 @@
+import os
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from typing import Dict
+import io
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
 
-router = APIRouter(prefix="/api/processed")
+router = APIRouter(prefix="/api/processed", tags=["processed"])
+
+DB_HOST = os.getenv("DB_HOST", "postgres")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "scraper_db")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
 
 @router.get("/{processed_id}/changes-fast")
 async def get_changed_rows_fast(processed_id: int) -> Dict:
@@ -64,3 +76,48 @@ async def get_changed_rows_fast(processed_id: int) -> Dict:
 
     except Exception as e:
         raise HTTPException(500, f"Error in fast change detection: {str(e)}")
+
+
+@router.get("/list")
+async def list_processed():
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT 
+                    MIN(id) AS representative_id,          -- Use for changes/preview links
+                    source_dataset,
+                    operations_applied,
+                    COUNT(*) AS row_count,
+                    MIN(processed_at) AS processed_at,
+                    MAX(processed_at) AS last_updated
+                FROM processed_items
+                GROUP BY 
+                    source_dataset,
+                    operations_applied,
+                    DATE_TRUNC('minute', processed_at)     -- Group runs within the same minute
+                ORDER BY processed_at DESC
+            """)
+            results = await cur.fetchall()
+            return results
+
+
+@router.get("/csv/{source_name}")
+async def get_processed_csv(source_name: str):
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT data FROM processed_items WHERE source_dataset = %s",
+                (source_name,)
+            )
+            rows = [r[0] for r in cur.fetchall()]
+            if not rows:
+                raise HTTPException(404, "Not found")
+            
+            df = pd.DataFrame(rows)
+            output = io.StringIO()
+            df.to_csv(output, index=False)
+            return StreamingResponse(
+                iter([output.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=processed_{source_name}.csv"}
+            )

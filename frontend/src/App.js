@@ -40,6 +40,7 @@ export default function App() {
 
       ws.onopen = () => {
         setWsConnected(true);
+        ws.send('*');
         if (reconnectTimer.current) {
           clearTimeout(reconnectTimer.current);
           reconnectTimer.current = null;
@@ -93,6 +94,10 @@ export default function App() {
             job_id: jobId,
             type: data.event || data.type || 'event',
             message: buildEventMessage(data),
+            workflow_id: data.workflow_id,
+            stage: data.stage,
+            status: data.status,
+            error: data.error,
           }, ...prev].slice(0, 200));
 
         } catch (_) { }

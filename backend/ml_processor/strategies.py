@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import re
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder, LabelEncoder
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler, OneHotEncoder, LabelEncoder
 
 # --- 1. CLEANING STRATEGIES ---
 
@@ -62,8 +62,7 @@ def convert_type(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 # --- 2. FEATURE ENGINEERING STRATEGIES ---
 
 def scale_features(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
-    """Applies MinMax or Standard scaling."""
-    # Support both 'column' and 'columns' from UI
+    """Applies MinMax, Standard, or Robust scaling."""
     col = kwargs.get('column') or kwargs.get('columns', '')
     method = kwargs.get('method', 'minmax')
 
@@ -71,11 +70,13 @@ def scale_features(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     if not cols:
         cols = df.select_dtypes(include='number').columns.tolist()
 
+    scaler = (StandardScaler() if method in ('z_score', 'standard')
+              else RobustScaler() if method == 'robust'
+              else MinMaxScaler())
+
     for c in cols:
         if c in df.columns and pd.api.types.is_numeric_dtype(df[c]):
-            data = df[c].values.reshape(-1, 1)
-            scaler = StandardScaler() if method in ('z_score', 'standard') else MinMaxScaler()
-            df[c] = scaler.fit_transform(data)
+            df[c] = scaler.fit_transform(df[c].values.reshape(-1, 1))
     return df
 
 def one_hot_encode(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
