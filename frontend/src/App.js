@@ -7,6 +7,7 @@ import MLTraining from './components/MLTraining';
 import CrawlMonitor from './components/CrawlMonitor';
 import Workflows from './components/Workflows';
 import DocsViewer from './components/DocsViewer';
+import Login from './components/Login';
 
 function buildEventMessage(data) {
   if (data.event === 'progress') {
@@ -22,6 +23,26 @@ function buildEventMessage(data) {
 }
 
 export default function App() {
+  // ── Auth state ────────────────────────────────────────────────────────────
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => !!localStorage.getItem('auth_token')
+  );
+  const [authUsername, setAuthUsername] = useState(
+    () => localStorage.getItem('auth_username') || ''
+  );
+
+  const handleAuthenticated = (username) => {
+    setIsAuthenticated(true);
+    setAuthUsername(username);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_username');
+    setIsAuthenticated(false);
+    setAuthUsername('');
+  };
+
   // ── Tab state — synced with URL search params ────────────────────────────
   const getInitialTab = () =>
     new URLSearchParams(window.location.search).get('tab') || 'datasets';
@@ -159,9 +180,20 @@ export default function App() {
     }
   };
 
+  // ── Auth gate ─────────────────────────────────────────────────────────────
+  if (!isAuthenticated) {
+    return <Login onAuthenticated={handleAuthenticated} />;
+  }
+
   return (
     <div className="app-layout">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} wsConnected={wsConnected} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        wsConnected={wsConnected}
+        username={authUsername}
+        onLogout={handleLogout}
+      />
       <main className="main-content">
         {renderContent()}
       </main>

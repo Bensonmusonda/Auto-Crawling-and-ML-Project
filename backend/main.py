@@ -29,6 +29,7 @@ from websocket_router import router as websocket_router
 from predict_router import router as predict_router
 from documentation.router import router as docs_router
 from documentation.core import build_registry
+from auth_router import router as auth_router
 
 
 import os
@@ -56,6 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(ml_training_router)
 app.include_router(config_router)
 app.include_router(processed_router)
