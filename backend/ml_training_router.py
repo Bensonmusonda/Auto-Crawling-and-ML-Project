@@ -270,3 +270,39 @@ async def get_model_details(job_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/configs/{dataset_name}")
+async def get_ml_training_configs(dataset_name: str):
+    """
+    Get past successful training configurations for a given dataset.
+    """
+    csv_path = f"/app/datasets/{dataset_name}.csv"
+    try:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT job_id, model_type, hyperparameters as params, target_column, created_at
+                    FROM model_registry
+                    WHERE source_csv = %s
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """, (csv_path,))
+                
+                rows = cur.fetchall()
+                configs = []
+                for row in rows:
+                    configs.append({
+                        "job_id": row["job_id"],
+                        "dataset_name": dataset_name,
+                        "config": {
+                            "model_type": row["model_type"],
+                            "target_column": row["target_column"],
+                            "params": row["params"],
+                            "auto_tune": False
+                        },
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None
+                    })
+                return configs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

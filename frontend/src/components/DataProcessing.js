@@ -83,6 +83,66 @@ const AVAILABLE_STEPS = [
             { key: 'column', label: 'Column name', type: 'singlecolumn', default: '' },
             { key: 'strip_chars', label: 'Characters to strip (e.g. US $, out of 5 stars)', type: 'text', default: '' }
         ]
+    },
+    {
+        id: 'convert_type',
+        label: 'Convert Type',
+        description: 'Force a column to numeric, datetime, or string',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'dtype', label: 'Data Type', type: 'select', options: ['numeric', 'datetime', 'string'], default: 'numeric' }
+        ]
+    },
+    {
+        id: 'clean_text',
+        label: 'Clean Text',
+        description: 'Remove HTML, special chars, and lowercase text',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
+        ]
+    },
+    {
+        id: 'sentiment',
+        label: 'Sentiment Analysis',
+        description: 'Calculate sentiment polarity for a text column',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
+        ]
+    },
+    {
+        id: 'ner_extract',
+        label: 'Extract Entities (NER)',
+        description: 'Extract specific entities like ORG, PERSON, GPE from text',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'entity_types', label: 'Entity Types (comma-separated)', type: 'text', default: 'ORG,PERSON,GPE' }
+        ]
+    },
+    {
+        id: 'extract_keywords',
+        label: 'Extract Keywords',
+        description: 'Extract top keywords using TF-IDF',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'top_n', label: 'Top N Keywords', type: 'text', default: '3' }
+        ]
+    },
+    {
+        id: 'detect_language',
+        label: 'Detect Language',
+        description: 'Detect the language of text in a column',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
+        ]
+    },
+    {
+        id: 'text_vectorize',
+        label: 'Vectorize Text (TF-IDF)',
+        description: 'Convert a text column into numerical TF-IDF features',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
+            { key: 'max_features', label: 'Max Features', type: 'text', default: '50' }
+        ]
     }
 ];
 

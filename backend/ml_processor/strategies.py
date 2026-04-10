@@ -227,3 +227,124 @@ def filter_rows(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         df = df[~df[col].astype(str).isin(values_to_exclude)]
     
     return df
+
+
+# --- 4. ADVANCED NLP STRATEGIES ---
+
+def ner_extract(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Extracts Named Entities (like ORG, PERSON) from text using spaCy."""
+    col = kwargs.get('column')
+    entity_types = kwargs.get('entity_types', 'ORG,PERSON,GPE')
+    if not col or col not in df.columns:
+        return df
+        
+    try:
+        import spacy
+        # Load the small english model
+        nlp = spacy.load("en_core_web_sm")
+    except Exception:
+        return df
+
+    target_types = [t.strip().upper() for t in entity_types.split(',') if t.strip()]
+
+    def get_entities(text):
+        if not isinstance(text, str):
+            return ""
+        try:
+            doc = nlp(text)
+            found = [ent.text for ent in doc.ents if not target_types or ent.label_ in target_types]
+            return ", ".join(list(set(found)))
+        except Exception:
+            return ""
+
+    df[f"{col}_entities"] = df[col].apply(get_entities)
+    return df
+
+def extract_keywords(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Extracts top keywords using scikit-learn TF-IDF."""
+    col = kwargs.get('column')
+    top_n = kwargs.get('top_n', 3)
+    try:
+        top_n = int(top_n)
+    except ValueError:
+        top_n = 3
+    
+    if not col or col not in df.columns:
+        return df
+        
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
+    
+    # Fill NA with empty string
+    texts = df[col].fillna('').astype(str).tolist()
+    
+    try:
+        matrix = vectorizer.fit_transform(texts)
+        feature_names = vectorizer.get_feature_names_out()
+        
+        results = []
+        for row in matrix:
+            # Get indices sorted by tf-idf score
+            indices = row.toarray()[0].argsort()[-top_n:][::-1]
+            keywords = [feature_names[i] for i in indices if row.toarray()[0][i] > 0]
+            results.append(", ".join(keywords))
+            
+        df[f"{col}_keywords"] = results
+    except Exception:
+        df[f"{col}_keywords"] = ""
+        
+    return df
+
+def detect_language(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Detects the language of a text column."""
+    col = kwargs.get('column')
+    if not col or col not in df.columns:
+        return df
+        
+    try:
+        from langdetect import detect
+        
+        def safe_detect(text):
+            if not isinstance(text, str) or not text.strip():
+                return "unknown"
+            try:
+                return detect(text)
+            except Exception:
+                return "unknown"
+                
+        df[f"{col}_lang"] = df[col].apply(safe_detect)
+    except ImportError:
+        pass
+    
+    return df
+
+def text_vectorize(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Converts a text column into multiple TF-IDF numeric features."""
+    col = kwargs.get('column')
+    max_features = kwargs.get('max_features', 50)
+    try:
+        max_features = int(max_features)
+    except ValueError:
+        max_features = 50
+    
+    if not col or col not in df.columns:
+        return df
+        
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    vectorizer = TfidfVectorizer(stop_words='english', max_features=max_features)
+    
+    texts = df[col].fillna('').astype(str).tolist()
+    
+    try:
+        matrix = vectorizer.fit_transform(texts)
+        feature_names = vectorizer.get_feature_names_out()
+        
+        # Create a dataframe from the matrix
+        tfidf_df = pd.DataFrame(matrix.toarray(), columns=[f"{col}_tfidf_{name}" for name in feature_names], index=df.index)
+        
+        # Concatenate
+        df = pd.concat([df, tfidf_df], axis=1)
+    except Exception:
+        pass
+        
+    return df

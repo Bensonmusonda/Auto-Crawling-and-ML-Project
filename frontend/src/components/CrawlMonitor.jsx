@@ -6,14 +6,15 @@ const API_BASE = 'http://localhost:8000';
 export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], onClearEvents }) {
     const [jobHistory, setJobHistory] = useState([]);
     const [historyLoading, setHistoryLoading] = useState(false);
-    const [toughSites, setToughSites] = useState([]);
+    const [siteTiers, setSiteTiers] = useState({ tough: [], playwright: [], hybrid: [] });
+    const [activeTier, setActiveTier] = useState('tough');
     const [newSite, setNewSite] = useState('');
-    const [toughSitesLoading, setToughSitesLoading] = useState(false);
-    const [toughSitesSaved, setToughSitesSaved] = useState(false);
+    const [tiersLoading, setTiersLoading] = useState(false);
+    const [tiersSaved, setTiersSaved] = useState(false);
 
     useEffect(() => {
         fetchJobHistory();
-        fetchToughSites();
+        fetchSiteTiers();
     }, []);
 
     // ── Job History ────────────────────────────────────────────
@@ -27,42 +28,55 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
         finally { setHistoryLoading(false); }
     };
 
-    // ── Tough Sites ────────────────────────────────────────────
-    const fetchToughSites = async () => {
-        setToughSitesLoading(true);
+    // ── Site Tiers ────────────────────────────────────────────
+    const fetchSiteTiers = async () => {
+        setTiersLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/crawl/tough-sites`);
-            const data = await res.json();
-            setToughSites(data.tough_sites || []);
+            const [resTough, resPlaywright, resHybrid] = await Promise.all([
+                fetch(`${API_BASE}/api/crawl/tough-sites`),
+                fetch(`${API_BASE}/api/crawl/playwright-sites`),
+                fetch(`${API_BASE}/api/crawl/hybrid-sites`)
+            ]);
+            const [dataTough, dataPlay, dataHybrid] = await Promise.all([
+                resTough.json(), resPlaywright.json(), resHybrid.json()
+            ]);
+            setSiteTiers({
+                tough: dataTough.tough_sites || [],
+                playwright: dataPlay.playwright_sites || [],
+                hybrid: dataHybrid.hybrid_sites || []
+            });
         } catch (_) { }
-        finally { setToughSitesLoading(false); }
+        finally { setTiersLoading(false); }
     };
 
-    const saveToughSites = async (sites) => {
+    const saveSiteTier = async (tier, updatedSites) => {
         try {
-            await fetch(`${API_BASE}/api/crawl/tough-sites`, {
+            await fetch(`${API_BASE}/api/crawl/${tier}-sites`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tough_sites: sites }),
+                body: JSON.stringify({ sites: updatedSites }), // Fixed 422 Error: uses 'sites' schema
             });
-            setToughSitesSaved(true);
-            setTimeout(() => setToughSitesSaved(false), 2000);
+            setTiersSaved(true);
+            setTimeout(() => setTiersSaved(false), 2000);
         } catch (_) { }
     };
 
-    const addToughSite = () => {
+    const addSite = () => {
         const site = newSite.trim().toLowerCase();
-        if (!site || toughSites.includes(site)) return;
-        const updated = [...toughSites, site];
-        setToughSites(updated);
+        const currentList = siteTiers[activeTier];
+        if (!site || currentList.includes(site)) return;
+        
+        const updated = [...currentList, site];
+        setSiteTiers(prev => ({ ...prev, [activeTier]: updated }));
         setNewSite('');
-        saveToughSites(updated);
+        saveSiteTier(activeTier, updated);
     };
 
-    const removeToughSite = (site) => {
-        const updated = toughSites.filter(s => s !== site);
-        setToughSites(updated);
-        saveToughSites(updated);
+    const removeSite = (site) => {
+        const currentList = siteTiers[activeTier];
+        const updated = currentList.filter(s => s !== site);
+        setSiteTiers(prev => ({ ...prev, [activeTier]: updated }));
+        saveSiteTier(activeTier, updated);
     };
 
     const liveJobsList = Object.values(liveJobs);
@@ -252,43 +266,69 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                     </div>
                 </div>
 
-                {/* ── Right: Tough Sites ── */}
+                {/* ── Right: Site Tier Routing ── */}
                 <div className="card" style={{ position: 'sticky', top: 'var(--space-xl)' }}>
-                    <div className="card-header">
-                        <span className="card-title">Tough Sites</span>
-                        <span className="badge badge-neutral">{toughSites.length}</span>
+                    <div className="card-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
+                        <span className="card-title">Routing Rules</span>
                     </div>
-                    <div className="card-body">
+
+                    <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', marginBottom: 'var(--space-md)' }}>
+                        <div 
+                            style={{ flex: 1, textAlign: 'center', padding: '8px 0', fontSize: 13, cursor: 'pointer', borderBottom: activeTier === 'tough' ? '2px solid #111' : '1px solid transparent', fontWeight: activeTier === 'tough' ? 600 : 400, color: activeTier === 'tough' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                            onClick={() => setActiveTier('tough')}
+                        >
+                            Tough
+                            <span className="badge badge-neutral" style={{ marginLeft: 6, fontSize: 9, padding: '2px 4px' }}>{siteTiers.tough.length}</span>
+                        </div>
+                        <div 
+                            style={{ flex: 1, textAlign: 'center', padding: '8px 0', fontSize: 13, cursor: 'pointer', borderBottom: activeTier === 'playwright' ? '2px solid #111' : '1px solid transparent', fontWeight: activeTier === 'playwright' ? 600 : 400, color: activeTier === 'playwright' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                            onClick={() => setActiveTier('playwright')}
+                        >
+                            Playwright
+                            <span className="badge badge-neutral" style={{ marginLeft: 6, fontSize: 9, padding: '2px 4px' }}>{siteTiers.playwright.length}</span>
+                        </div>
+                        <div 
+                            style={{ flex: 1, textAlign: 'center', padding: '8px 0', fontSize: 13, cursor: 'pointer', borderBottom: activeTier === 'hybrid' ? '2px solid #111' : '1px solid transparent', fontWeight: activeTier === 'hybrid' ? 600 : 400, color: activeTier === 'hybrid' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                            onClick={() => setActiveTier('hybrid')}
+                        >
+                            Hybrid
+                            <span className="badge badge-neutral" style={{ marginLeft: 6, fontSize: 9, padding: '2px 4px' }}>{siteTiers.hybrid.length}</span>
+                        </div>
+                    </div>
+
+                    <div className="card-body" style={{ paddingTop: 0 }}>
                         <p style={{
                             fontSize: 12, color: 'var(--text-secondary)',
                             marginBottom: 'var(--space-md)'
                         }}>
-                            Domains routed through ScraperAPI. Changes take effect on the next crawl.
+                            {activeTier === 'tough' && "Domains routed through ScraperAPI. Bypasses hard IP blocks."}
+                            {activeTier === 'playwright' && "Domains rendered in Playwright (browser mode) by Scrapy. Handles SPAs."}
+                            {activeTier === 'hybrid' && "Domains rendered via ScraperAPI JS rendering. Max bypassing."}
                         </p>
 
                         <div className="flex-row" style={{ marginBottom: 'var(--space-md)' }}>
                             <input
                                 className="form-input"
-                                placeholder="e.g. linkedin.com"
+                                placeholder={`e.g. ${activeTier === 'tough' ? 'linkedin.com' : activeTier === 'playwright' ? 'youtube.com' : 'zillow.com'}`}
                                 value={newSite}
                                 onChange={e => setNewSite(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && addToughSite()}
+                                onKeyDown={e => e.key === 'Enter' && addSite()}
                                 style={{ flex: 1 }}
                             />
-                            <button className="btn btn-primary" onClick={addToughSite}>
+                            <button className="btn btn-primary" onClick={addSite}>
                                 <Plus size={14} />
                             </button>
                         </div>
 
-                        {toughSitesLoading ? (
+                        {tiersLoading ? (
                             <div style={{ textAlign: 'center', padding: 'var(--space-md)' }}>
                                 <span className="spinner" />
                             </div>
-                        ) : toughSites.length === 0 ? (
+                        ) : siteTiers[activeTier].length === 0 ? (
                             <div className="empty-state" style={{ padding: 'var(--space-md)' }}>
-                                <div className="empty-state-text">No tough sites configured</div>
+                                <div className="empty-state-text">No sites in this list</div>
                             </div>
-                        ) : toughSites.map(site => (
+                        ) : siteTiers[activeTier].map(site => (
                             <div key={site} className="flex-between" style={{
                                 padding: '8px 10px',
                                 border: '1px solid var(--border-light)',
@@ -299,14 +339,14 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                                 <span className="mono" style={{ fontSize: 13 }}>{site}</span>
                                 <button
                                     className="btn btn-secondary btn-sm"
-                                    onClick={() => removeToughSite(site)}
+                                    onClick={() => removeSite(site)}
                                 >
                                     <Trash2 size={12} />
                                 </button>
                             </div>
                         ))}
 
-                        {toughSitesSaved && (
+                        {tiersSaved && (
                             <div className="badge badge-success" style={{ marginTop: 'var(--space-sm)' }}>
                                 Saved
                             </div>

@@ -21,7 +21,7 @@ async def validate_selector(request: ValidationRequest):
     (Amazon, dynamic SPAs, etc.) or when force_playwright=True.
     """
     try:
-        from main import celery_app
+        from tasks import celery_app
         
         # Determine which validator to use
         use_playwright = request.force_playwright or _should_use_playwright(request.url)
@@ -137,7 +137,7 @@ async def validate_batch(requests: list[ValidationRequest]):
     Validate multiple selectors in batch.
     Useful when testing alternative selectors.
     """
-    from main import celery_app
+    from tasks import celery_app
     
     results = []
     
@@ -175,7 +175,7 @@ async def get_batch_result(task_id: str):
     """
     Get results for a batch validation task.
     """
-    from main import celery_app
+    from tasks import celery_app
     from celery.result import AsyncResult
     
     task = AsyncResult(task_id, app=celery_app)

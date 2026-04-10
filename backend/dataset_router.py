@@ -121,7 +121,7 @@ def get_csv_columns(path: str):
 
 @router.post("/api/process")
 async def process_dataset(request: PipelineConfig):
-    from main import celery_app
+    from tasks import celery_app
     try:
         task = celery_app.send_task(
             'tasks.run_ml_pipeline', 

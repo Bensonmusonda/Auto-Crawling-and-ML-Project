@@ -6,6 +6,7 @@ import DataProcessing from './components/DataProcessing';
 import MLTraining from './components/MLTraining';
 import CrawlMonitor from './components/CrawlMonitor';
 import Workflows from './components/Workflows';
+import DocsViewer from './components/DocsViewer';
 
 function buildEventMessage(data) {
   if (data.event === 'progress') {
@@ -21,7 +22,27 @@ function buildEventMessage(data) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('datasets');
+  // ── Tab state — synced with URL search params ────────────────────────────
+  const getInitialTab = () =>
+    new URLSearchParams(window.location.search).get('tab') || 'datasets';
+  const getInitialSlug = () =>
+    new URLSearchParams(window.location.search).get('slug') || null;
+
+  const [activeTab, setActiveTab] = useState(getInitialTab);
+  const [activeSlug, setActiveSlug] = useState(getInitialSlug);
+
+  const handleTabChange = useCallback((tabId) => {
+    setActiveTab(tabId);
+    setActiveSlug(null);
+    const params = new URLSearchParams({ tab: tabId });
+    window.history.replaceState(null, '', `?${params}`);
+  }, []);
+
+  const handleSlugChange = useCallback((slug) => {
+    setActiveSlug(slug);
+    const params = new URLSearchParams({ tab: 'docs', slug });
+    window.history.replaceState(null, '', `?${params}`);
+  }, []);
 
   // ── Lifted WebSocket state ──────────────────────────────
   const [liveJobs, setLiveJobs] = useState({});
@@ -132,13 +153,15 @@ export default function App() {
         );
       case 'workflows':
         return <Workflows wsEvents={events} />;
+      case 'docs':
+        return <DocsViewer activeSlug={activeSlug} onSlugChange={handleSlugChange} />;
       default: return <DatasetExplorer />;
     }
   };
 
   return (
     <div className="app-layout">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} wsConnected={wsConnected} />
+      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} wsConnected={wsConnected} />
       <main className="main-content">
         {renderContent()}
       </main>

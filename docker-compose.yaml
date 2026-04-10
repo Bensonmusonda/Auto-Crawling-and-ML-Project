@@ -21,13 +21,18 @@ services:
       - .env
     networks:
       - scraper_network
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
       - ./scraping module:/app
 
   backend:
     build:
       context: ./backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "__pycache__"
+    environment:
+      - WATCHFILES_FORCE_POLLING=true
+      - PYTHONDONTWRITEBYTECODE=1
     ports:
       - "8000:8000"
     depends_on:
@@ -57,7 +62,7 @@ services:
   ml_worker:
     build:
       context: ./backend
-    command: celery -A tasks worker --loglevel=info -Q ml_tasks
+    command: celery -A tasks worker --loglevel=info -Q ml_tasks --concurrency=4
     depends_on:
       - redis
       - postgres
@@ -65,6 +70,8 @@ services:
       - .env
     networks:
       - scraper_network
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
       - ./backend:/app
 

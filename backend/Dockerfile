@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir \
     --default-timeout=1000 \
     --retries 5 \
     -r requirements.txt
+    
+# Download spaCy model
+RUN python -m spacy download en_core_web_sm
 
 COPY . .

@@ -86,7 +86,7 @@ def persist_model_metadata(job_id: str, result: dict, csv_path: str, target_colu
             conn.commit()
 
 
-def run_model_training(self, csv_path: str, target_column: str, model_type: str, params: dict):
+def run_model_training(self, csv_path: str, target_column: str, model_type: str, params: dict, **kwargs):
     """
     Celery task to train a machine learning model.
     

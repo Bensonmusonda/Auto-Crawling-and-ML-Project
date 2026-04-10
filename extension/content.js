@@ -56,6 +56,31 @@ document.addEventListener("mouseout", (event) => {
   hideHoverTooltip();
 }, true);
 
+// Keyboard Navigation: Allow expanding selection to parent/child
+document.addEventListener("keydown", (event) => {
+  if (!isPicking || !hoveredElement) return;
+  
+  if (event.key === 'ArrowUp' || event.key.toLowerCase() === 'w') {
+    event.preventDefault();
+    const parent = hoveredElement.parentElement;
+    if (parent && parent.tagName !== 'HTML' && parent.tagName !== 'BODY') {
+      removeHighlight();
+      hoveredElement = parent;
+      hoveredElement.classList.add("ac-selector-highlight");
+      showHoverTooltip(hoveredElement);
+    }
+  } else if (event.key === 'ArrowDown' || event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    const child = hoveredElement.firstElementChild;
+    if (child) {
+      removeHighlight();
+      hoveredElement = child;
+      hoveredElement.classList.add("ac-selector-highlight");
+      showHoverTooltip(hoveredElement);
+    }
+  }
+}, true);
+
 // Click: Select element
 document.addEventListener("click", (event) => {
   if (!isPicking) return;
@@ -63,7 +88,8 @@ document.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
 
-  const element = event.target;
+  // Use hoveredElement so keyboard navigation works, fallback to event.target
+  const element = hoveredElement || event.target;
   
   if (pickingMode === 'container') {
     handleContainerSelection(element);
@@ -90,7 +116,7 @@ function handleContainerSelection(element) {
     
     let current = element.parentElement;
     let levelsChecked = 0;
-    const maxLevels = 5; // Don't go too far up
+    const maxLevels = 20; // Allow deeply nested clicks to find the repeating parent
     
     while (current && levelsChecked < maxLevels && current.tagName !== 'BODY') {
       const parentPattern = detectRepeatingPattern(current);
@@ -1062,7 +1088,12 @@ function showHoverTooltip(element) {
   const classes = getStableClasses(element).slice(0, 2).join('.');
   const text = (element.innerText || element.textContent || '').substring(0, 30);
   
-  tooltip.textContent = `${tag}${classes ? '.' + classes : ''} ${text ? '| ' + text : ''}`;
+  let instructions = "";
+  if (pickingMode === 'container') {
+      instructions = " [Press W/S or ↑/↓ to navigate parents/children]";
+  }
+  
+  tooltip.textContent = `${tag}${classes ? '.' + classes : ''} ${text ? '| ' + text : ''}${instructions}`;
   tooltip.style.top = `${rect.top - 30}px`;
   tooltip.style.left = `${rect.left}px`;
   tooltip.style.display = 'block';

@@ -177,6 +177,48 @@ function setupEventListeners() {
     configManager.setDatasetName(e.target.value);
     configManager.saveToStorage();
   });
+
+  // Manual edits for generic selectors
+  elements.containerSelectorDisplay.addEventListener('input', async (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    configManager.setContainerSelector(newSelector);
+    configManager.saveToStorage();
+    
+    const tab = await getCurrentTab();
+    chrome.tabs.sendMessage(tab.id, { action: 'testSelector', selector: newSelector, containerSelector: null }, (result) => {
+      if (result && result.valid) {
+        elements.containerCountDisplay.textContent = result.count;
+      } else {
+        elements.containerCountDisplay.textContent = '0 (Invalid)';
+      }
+    });
+  });
+
+  elements.paginationSelectorDisplay.addEventListener('input', (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    const maxPagesInput = document.getElementById('maxPagesInput');
+    const maxPages = maxPagesInput ? (parseInt(maxPagesInput.value) || 5) : 5;
+    configManager.setPagination(newSelector, maxPages, 'selector');
+    configManager.saveToStorage();
+  });
+
+  elements.linkSelectorDisplay.addEventListener('input', async (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    configManager.setLinkSelector(newSelector);
+    configManager.saveToStorage();
+    
+    const tab = await getCurrentTab();
+    chrome.tabs.sendMessage(tab.id, { action: 'testSelector', selector: newSelector, containerSelector: configManager.config.container_selector }, (result) => {
+      if (result && result.valid) {
+        elements.linkCountDisplay.textContent = result.count;
+      } else {
+        elements.linkCountDisplay.textContent = '0 (Invalid)';
+      }
+    });
+  });
 }
 
 // Listen for messages from content script
@@ -306,7 +348,7 @@ function handleContainerSelected(data) {
   configManager.setContainerSelector(data.selector);
   configManager.saveToStorage();
   
-  elements.containerSelectorDisplay.textContent = data.selector;
+  elements.containerSelectorDisplay.value = data.selector;
   elements.containerCountDisplay.textContent = data.count;
   elements.containerStatus.classList.remove('hidden');
   
@@ -701,7 +743,7 @@ function clearLink() {
 function updateAdvancedStatus() {
   // Pagination
   if (configManager.config.pagination) {
-    elements.paginationSelectorDisplay.textContent = configManager.config.pagination.selector;
+    elements.paginationSelectorDisplay.value = configManager.config.pagination.selector;
     elements.maxPagesDisplay.textContent = configManager.config.pagination.max_pages;
     elements.paginationStatus.classList.remove('hidden');
   } else {
@@ -710,7 +752,7 @@ function updateAdvancedStatus() {
   
   // Link selector
   if (configManager.config.link_selector) {
-    elements.linkSelectorDisplay.textContent = configManager.config.link_selector;
+    elements.linkSelectorDisplay.value = configManager.config.link_selector;
     elements.linkStatus.classList.remove('hidden');
     
     // Count links (async)

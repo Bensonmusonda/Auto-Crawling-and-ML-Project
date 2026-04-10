@@ -1,5 +1,5 @@
 import React from 'react';
-import { Database, Wrench, Brain, Activity, GitBranch } from 'lucide-react';
+import { Database, Wrench, Brain, Activity, GitBranch, BookOpen } from 'lucide-react';
 
 const tabs = [
   { id: 'datasets', label: 'Datasets', icon: Database },
@@ -7,6 +7,7 @@ const tabs = [
   { id: 'training', label: 'ML Training', icon: Brain },
   { id: 'crawl', label: 'Crawl Monitor', icon: Activity },
   { id: 'workflows', label: 'Workflows', icon: GitBranch },
+  { id: 'docs', label: 'Docs & Guides', icon: BookOpen },
 ];
 
 export default function Sidebar({ activeTab, onTabChange, wsConnected }) {

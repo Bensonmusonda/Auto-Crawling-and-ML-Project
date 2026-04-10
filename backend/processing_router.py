@@ -7,6 +7,7 @@ import io
 import json
 import os
 import psycopg
+import uuid
 
 from ml_processor.core import UniversalEngine
 
@@ -57,6 +58,8 @@ async def execute_processing(request: ProcessRequest):
         os.makedirs("/app/datasets", exist_ok=True)
         csv_path = f"/app/datasets/{request.dataset_name}.csv"
         processed_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        
+        job_id = f"proc_{uuid.uuid4().hex[:12]}"
 
         # 5. Also archive to processed_items table
         import hashlib
@@ -77,6 +80,19 @@ async def execute_processing(request: ProcessRequest):
                     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS processing_jobs (
+                    job_id VARCHAR(255) PRIMARY KEY,
+                    dataset_name VARCHAR(255),
+                    config JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            await cur.execute("""
+                INSERT INTO processing_jobs (job_id, dataset_name, config)
+                VALUES (%s, %s, %s)
+            """, (job_id, request.dataset_name, config_json))
+
             for record in records_out:
                 record_json = json.dumps(record, sort_keys=True, separators=(",", ":"))
                 row_hash = hashlib.sha256(record_json.encode("utf-8")).hexdigest()
@@ -109,3 +125,31 @@ async def execute_processing(request: ProcessRequest):
     finally:
         if connection:
             await connection.close()
+
+
+@router.get("/configs/{dataset_name}")
+async def get_processing_configs(dataset_name: str):
+    from psycopg.rows import dict_row
+    async with await psycopg.AsyncConnection.connect(
+        DB_URL, row_factory=dict_row
+    ) as conn:
+        async with conn.cursor() as cur:
+            # Ensure table exists in case this is called before any processing
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS processing_jobs (
+                    job_id VARCHAR(255) PRIMARY KEY,
+                    dataset_name VARCHAR(255),
+                    config JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            await conn.commit()
+            
+            await cur.execute("""
+                SELECT job_id, dataset_name, config, created_at
+                FROM processing_jobs
+                WHERE dataset_name = %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (dataset_name,))
+            return await cur.fetchall()

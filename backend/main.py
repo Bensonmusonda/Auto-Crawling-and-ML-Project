@@ -27,11 +27,21 @@ from dataset_router import router as dataset_router
 from workflow_router import router as workflow_router
 from websocket_router import router as websocket_router
 from predict_router import router as predict_router
+from documentation.router import router as docs_router
+from documentation.core import build_registry
 
 
 import os
+from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="Data Acquisition & ML Platform")
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    # Build documentation registry at startup
+    build_registry()
+    yield
+
+app = FastAPI(title="Data Acquisition & ML Platform", lifespan=lifespan)
 
 origins = [
     "http://localhost:5500",
@@ -54,6 +64,12 @@ app.include_router(dataset_router)
 app.include_router(workflow_router)
 app.include_router(websocket_router)
 app.include_router(predict_router)
+app.include_router(docs_router)
+
+# Serve images referenced in docs (e.g. /docs-images/diagram.png)
+_docs_images_dir = os.getenv("DOCS_IMAGES_DIR", "/app/docs/images")
+if os.path.isdir(_docs_images_dir):
+    app.mount("/docs-images", StaticFiles(directory=_docs_images_dir), name="docs-images")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 DB_HOST = os.getenv("DB_HOST", "postgres")

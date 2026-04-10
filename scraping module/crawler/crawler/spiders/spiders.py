@@ -4,7 +4,7 @@ import redis
 import psycopg
 from scrapy.http import Response
 from typing import Dict, Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 import os
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -72,20 +72,22 @@ class UniversalSpider(scrapy.Spider):
     # Request Helpers
     # -------------------------
 
-    def build_scraperapi_url(self, target_url: str, wait_selector: str = None) -> str:
+    def build_scraperapi_url(self, target_url: str, wait_selector: str = None, render: bool = False) -> str:
         """
         Build ScraperAPI URL with optional wait_for_selector.
         
         Args:
             target_url: The URL to scrape
             wait_selector: CSS selector to wait for before returning HTML
+            render: Boolean to enable JS rendering via ScraperAPI
         """
         encoded_url = quote_plus(target_url)
         params = [
             f"api_key={self.scraper_api_key}",
-            f"url={encoded_url}",
-            "render=true"
+            f"url={encoded_url}"
         ]
+        if render:
+            params.append("render=true")
         
         # Add wait_for_selector if provided (for hybrid sites)
         if wait_selector:
@@ -140,7 +142,8 @@ class UniversalSpider(scrapy.Spider):
                 # Use ScraperAPI with wait_for_selector
                 api_url = self.build_scraperapi_url(
                     url, 
-                    wait_selector=self.container_selector
+                    wait_selector=self.container_selector,
+                    render=True
                 )
 
                 self.logger.warning(f"🔧 Using Hybrid (ScraperAPI + wait) for: {url}")
@@ -160,7 +163,7 @@ class UniversalSpider(scrapy.Spider):
                 
             elif self.should_use_scraperapi(url):
                 # Regular ScraperAPI without wait_for_selector
-                api_url = self.build_scraperapi_url(url)
+                api_url = self.build_scraperapi_url(url, render=False)
 
                 self.logger.warning(f"🤖 Using ScraperAPI for: {url}")
 
@@ -299,6 +302,9 @@ class UniversalSpider(scrapy.Spider):
                 self.logger.info("No next page link found - end of pagination")
                 return
 
+            original_url = response.meta.get("original_url", response.url)
+            next_url = urljoin(original_url, next_url)
+
             self.list_pages_count += 1
 
         # Route pagination based on what was used for first request
@@ -324,7 +330,8 @@ class UniversalSpider(scrapy.Spider):
             # Use ScraperAPI with wait_for_selector for pagination
             api_url = self.build_scraperapi_url(
                 next_url,
-                wait_selector=self.container_selector
+                wait_selector=self.container_selector,
+                render=True
             )
 
             self.logger.info(f"Following pagination (hybrid) to: {next_url}")
@@ -341,7 +348,7 @@ class UniversalSpider(scrapy.Spider):
             )
         elif using_scraperapi and self.should_use_scraperapi(next_url):
             # Regular ScraperAPI without wait_for_selector
-            api_url = self.build_scraperapi_url(next_url)
+            api_url = self.build_scraperapi_url(next_url, render=False)
 
             self.logger.info(f"Following pagination (ScraperAPI) to: {next_url}")
 
@@ -371,26 +378,29 @@ class UniversalSpider(scrapy.Spider):
         item = {}
 
         for field, sel in self.item_selectors.items():
-            
-            # Handle XPath
-            if sel.startswith('/') or sel.startswith('./'):
-                # XPath: check if it already has text() extraction
-                if 'text()' not in sel:
-                    sel = f"{sel}/text()"
-                results = selector.xpath(sel).getall()
-            
-            # Handle CSS
-            else:
-                # CSS: auto-append ::text if not present
-                if '::text' not in sel and '::attr' not in sel:
-                    sel = f"{sel}::text"
-                results = selector.css(sel).getall()
+            try:
+                # Handle XPath
+                if sel.startswith('/') or sel.startswith('./'):
+                    # XPath: check if it already has text() extraction
+                    if 'text()' not in sel:
+                        sel = f"{sel}/text()"
+                    results = selector.xpath(sel).getall()
+                
+                # Handle CSS
+                else:
+                    # CSS: auto-append ::text if not present
+                    if '::text' not in sel and '::attr' not in sel:
+                        sel = f"{sel}::text"
+                    results = selector.css(sel).getall()
 
-            if results:
-                cleaned = [r.strip() for r in results if r.strip()]
-                separator = ", " if field in ["tags", "platforms", "genre"] else " "
-                item[field] = separator.join(cleaned)
-            else:
+                if results:
+                    cleaned = [r.strip() for r in results if r.strip()]
+                    separator = ", " if field in ["tags", "platforms", "genre"] else " "
+                    item[field] = separator.join(cleaned)
+                else:
+                    item[field] = None
+            except Exception as e:
+                self.logger.error(f"Failed to extract field '{field}' with selector '{sel}': {e}")
                 item[field] = None
 
         item.update({

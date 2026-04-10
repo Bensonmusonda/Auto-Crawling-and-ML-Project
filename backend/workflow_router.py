@@ -52,6 +52,104 @@ async def create_workflow(payload: dict):
             return row
 
 
+@router.post("/from-past-runs")
+async def create_workflow_from_past_runs(payload: dict):
+    """
+    Creates a new workflow by stitching together configurations from past standalone jobs.
+    Payload:
+    {
+        "name": "Workflow Name",
+        "dataset_name": "dataset",
+        "stages_to_include": {
+            "crawl_job_id": "abc-123",
+            "process_job_id": "proc-xyz",
+            "train_job_id": "train-456"
+        }
+    }
+    """
+    await ensure_workflows_table()
+    name = payload.get('name')
+    dataset_name = payload.get('dataset_name')
+    stages_to_include = payload.get('stages_to_include', {})
+
+    if not all([name, dataset_name]):
+        raise HTTPException(400, "name and dataset_name are required")
+
+    stages = {
+        "crawl": {"enabled": False, "config": {}},
+        "processing": {"enabled": False, "config": {"steps": []}},
+        "ml": {"enabled": False, "config": {}}
+    }
+
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            # 1. Fetch Crawl Config
+            crawl_id = stages_to_include.get('crawl_job_id')
+            if crawl_id:
+                await cur.execute("SELECT config FROM crawl_jobs WHERE job_id = %s", (crawl_id,))
+                row = await cur.fetchone()
+                if row:
+                    stages["crawl"]["enabled"] = True
+                    stages["crawl"]["config"] = row["config"]
+                else:
+                    raise HTTPException(404, f"Crawl job {crawl_id} not found")
+
+            # 2. Fetch Process Config
+            proc_id = stages_to_include.get('process_job_id')
+            if proc_id:
+                # Ensure table exists first just in case
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS processing_jobs (
+                        job_id VARCHAR(255) PRIMARY KEY,
+                        dataset_name VARCHAR(255),
+                        config JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                await cur.execute("SELECT config FROM processing_jobs WHERE job_id = %s", (proc_id,))
+                row = await cur.fetchone()
+                if row:
+                    stages["processing"]["enabled"] = True
+                    stages["processing"]["config"]["steps"] = row["config"]
+                else:
+                    raise HTTPException(404, f"Processing job {proc_id} not found")
+
+            # 3. Fetch Train Config
+            train_id = stages_to_include.get('train_job_id')
+            if train_id:
+                await cur.execute("""
+                    SELECT model_type, hyperparameters as params, target_column 
+                    FROM model_registry 
+                    WHERE job_id = %s
+                """, (train_id,))
+                row = await cur.fetchone()
+                if row:
+                    stages["ml"]["enabled"] = True
+                    stages["ml"]["config"] = {
+                        "model_type": row["model_type"],
+                        "target_column": row["target_column"],
+                        "params": row["params"],
+                        "auto_tune": False
+                    }
+                else:
+                    raise HTTPException(404, f"Training job {train_id} not found")
+
+            # Validate at least one stage is enabled
+            if not any(s["enabled"] for s in stages.values()):
+                raise HTTPException(400, "At least one valid job ID must be provided to create a workflow")
+
+            # Save the workflow
+            await cur.execute("""
+                INSERT INTO workflows (name, dataset_name, stages)
+                VALUES (%s, %s, %s)
+                RETURNING id, name, dataset_name, stages, last_run_at, last_run_status, created_at
+            """, (name, dataset_name, json.dumps(stages)))
+            
+            created_row = await cur.fetchone()
+            await conn.commit()
+            return created_row
+
+
 @router.get("")
 async def list_workflows():
     await ensure_workflows_table()
@@ -116,7 +214,7 @@ async def delete_workflow(workflow_id: int):
 
 @router.post("/{workflow_id}/run")
 async def run_workflow(workflow_id: int):
-    from main import celery_app
+    from tasks import celery_app
     # Verify workflow exists
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
@@ -189,3 +287,28 @@ async def get_workflow_history(workflow_id: int, limit: int = 5):
         })
 
     return result
+
+
+@router.get("/runs/{run_id}/stage-logs/{stage}")
+async def get_stage_logs(run_id: str, stage: str):
+    """Return all logs for a specific workflow run and stage."""
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT level, message, timestamp
+                FROM workflow_logs
+                WHERE run_id = %s AND stage = %s
+                ORDER BY timestamp ASC
+            """, (run_id, stage))
+            rows = await cur.fetchall()
+            
+    # Format for frontend
+    logs = []
+    for row in rows:
+        logs.append({
+            "level": row["level"],
+            "message": row["message"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None
+        })
+        
+    return {"logs": logs}

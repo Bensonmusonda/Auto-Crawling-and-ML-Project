@@ -20,7 +20,7 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 @router.post("")
 async def send_crawl_task(config_request: CrawlRequest):
-    from main import celery_app
+    from tasks import celery_app
 
     json_config = config_request.model_dump()
     result = celery_app.send_task("tasks.run_crawl_task", args=(json_config,))

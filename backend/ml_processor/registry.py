@@ -3,7 +3,8 @@ from .strategies import (
     scale_features, one_hot_encode,
     clean_text, sentiment_analysis, drop_columns, label_encode,
     remove_duplicates,
-    rename_columns, filter_rows, clean_numeric_column
+    rename_columns, filter_rows, clean_numeric_column,
+    ner_extract, extract_keywords, detect_language, text_vectorize
 )
 
 PROCESSOR_REGISTRY = {
@@ -25,6 +26,10 @@ PROCESSOR_REGISTRY = {
     "rename_columns": rename_columns,        # new
     "filter_rows": filter_rows,              # new
     "clean_numeric_column": clean_numeric_column,
+    "ner_extract": ner_extract,
+    "extract_keywords": extract_keywords,
+    "detect_language": detect_language,
+    "text_vectorize": text_vectorize,
 }
 
 def get_strategy(name: str):
