@@ -10,3 +10,9 @@ WORKFLOWS_ROADMAP.md
 PROJECT_BUILD_OUTLINE.md
 presentation_prep.md
 COMPREHENSIVE_TEST_GUIDE.md
+
+# NotebookLM compilation tools and output
+compile_codebase.py
+Project_Codebase_Full.pdf
+notebooklm_prompt.txt
+*.pdf

@@ -14,17 +14,35 @@ const API_BASE = 'http://localhost:8000';
  *             (needs: job_id, feature_names, task_type, target_column)
  */
 export default function PredictionTester({ model }) {
-    const [values, setValues] = useState(() => {
-        const init = {};
-        (model.feature_names || []).forEach(f => { init[f] = ''; });
-        return init;
-    });
+    const [values, setValues] = useState({});
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
 
+    // Update internal values when model changes
+    React.useEffect(() => {
+        if (model?.feature_names) {
+            const init = {};
+            model.feature_names.forEach(f => { init[f] = ''; });
+            setValues(init);
+        }
+        setResult(null);
+        setError(null);
+    }, [model?.job_id, model?.feature_names]);
+
+    if (!model) return null;
+
     if (!model.feature_names || model.feature_names.length === 0) {
-        return null;
+        return (
+            <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                <div className="card-body empty-state">
+                    <AlertCircle size={24} style={{ color: 'var(--text-tertiary)', marginBottom: 12 }} />
+                    <div className="empty-state-text">
+                        This model is missing feature metadata and cannot be tested.
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     const handleChange = (feature, value) => {

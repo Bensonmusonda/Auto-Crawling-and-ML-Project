@@ -124,7 +124,22 @@ def _apply_pipeline_to_row(
 
             scaler = _get_scaler(method)
             try:
-                scaler.fit(processed[valid_cols].values)
+                # CRITICAL FIX: If processed looks already normalized [0,1], 
+                # we need to find the RAW ranges to properly scale the user input.
+                sample_range = processed[valid_cols].max() - processed[valid_cols].min()
+                if (sample_range <= 1.0001).all() and (processed[valid_cols].min() >= -0.0001).all():
+                    # The CSV is already normalized! Fitting on it is useless for "actual" values.
+                    # Try to get raw distribution from the DB
+                    raw = get_raw()
+                    if not raw.empty and all(c in raw.columns for c in valid_cols):
+                        scaler.fit(raw[valid_cols].astype(float).values)
+                    else:
+                        # Fallback: if we can't get raw, we can't scale "actual" values.
+                        # We just have to hope the user entered normalized values.
+                        pass
+                else:
+                    scaler.fit(processed[valid_cols].values)
+
                 input_df[valid_cols] = scaler.transform(
                     input_df[valid_cols].values
                 )
@@ -337,8 +352,34 @@ async def predict(job_id: str, payload: dict):
     }
 
     if task_type == "regression":
-        result["prediction"]         = round(float(raw_prediction), 4)
-        result["prediction_display"] = str(round(float(raw_prediction), 2))
+        pred_val = float(raw_prediction)
+        
+        # Target Un-normalization: If target_column is in processed_csv and looks normalized [0,1],
+        # try to un-normalize it for display
+        display_val = pred_val
+        # Only attempt un-normalization if the prediction itself looks normalized
+        # (i.e. it falls inside [0, 1]). If the model was trained on raw values the
+        # prediction will already be in real units and must not be scaled up.
+        if 0.0 <= pred_val <= 1.0 and source_csv and os.path.exists(source_csv):
+            try:
+                df_proc = pd.read_csv(source_csv)
+                if target_column in df_proc.columns:
+                    t_min = df_proc[target_column].min()
+                    t_max = df_proc[target_column].max()
+                    if t_min >= -0.0001 and t_max <= 1.0001:
+                        # Target was normalized. Try to find raw range.
+                        raw = _load_raw_df(dataset_name)
+                        if not raw.empty and target_column in raw.columns:
+                            raw_target = pd.to_numeric(raw[target_column], errors='coerce').dropna()
+                            if not raw_target.empty:
+                                r_min = raw_target.min()
+                                r_max = raw_target.max()
+                                display_val = pred_val * (r_max - r_min) + r_min
+            except Exception:
+                pass
+
+        result["prediction"]         = round(pred_val, 4)
+        result["prediction_display"] = str(round(display_val, 2))
     else:
         result["prediction"]         = int(raw_prediction)
         result["prediction_display"] = (

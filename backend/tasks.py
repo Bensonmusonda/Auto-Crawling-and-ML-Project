@@ -10,6 +10,7 @@ import hashlib
 from ml_processor.core import UniversalEngine
 from ml_training.core import ModelTrainer
 from ml_training_task import persist_model_metadata
+from db_utils import get_user_dataset_dir
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 DB_HOST = os.getenv("DB_HOST", "postgres")
@@ -25,10 +26,17 @@ celery_app = Celery(
     backend=f'redis://{REDIS_HOST}:6379/1'
 )
 
-def fetch_dataset(dataset_name, source="db"):
+def fetch_dataset(dataset_name, source="db", owner_id=None):
     """Connects to Postgres to get raw scraped data or reads CSV if source == 'csv'"""
     if source == "csv":
-        csv_path = f"/app/datasets/{dataset_name}.csv"
+        user_dir = get_user_dataset_dir(owner_id)
+        # Check user dir first
+        csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
+        if not os.path.exists(csv_path):
+            # Fallback to admin/shared if not found in user dir
+            admin_dir = get_user_dataset_dir(1)
+            csv_path = os.path.join(admin_dir, f"{dataset_name}.csv")
+            
         if os.path.exists(csv_path):
             return pd.read_csv(csv_path)
 
@@ -38,7 +46,7 @@ def fetch_dataset(dataset_name, source="db"):
             rows = cur.fetchall()
             return [row['data'] for row in rows]
 
-def archive_processed_data(df, source_name, pipeline_config):
+def archive_processed_data(df, source_name, pipeline_config, owner_id=None):
     """Archives the cleaned dataframe into the processed_items table"""
     # 1. Prepare data: Replace NaNs/inf with None
     df_clean = df.replace([np.nan, np.inf, -np.inf], None)
@@ -70,10 +78,10 @@ def archive_processed_data(df, source_name, pipeline_config):
                 cur.execute(
                     """
                     INSERT INTO processed_items
-                    (source_dataset, operations_applied, data, row_hash)
-                    VALUES (%s, %s, %s, %s)
+                    (source_dataset, operations_applied, data, row_hash, owner_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (source_name, config_json, json.dumps(record), row_hash)
+                    (source_name, config_json, json.dumps(record), row_hash, owner_id)
                 )
             conn.commit()
 
@@ -93,11 +101,12 @@ def run_ml_pipeline(self, dataset_name, pipeline_config, source="csv", **kwargs)
         engine = UniversalEngine(raw_data)
         processed_df, logs = engine.run_pipeline(pipeline_config)
 
-        archive_processed_data(processed_df, dataset_name, pipeline_config)
+        owner_id = kwargs.get('owner_id') or self.request.kwargs.get('owner_id')
+        archive_processed_data(processed_df, dataset_name, pipeline_config, owner_id=owner_id)
 
-        # ── Save CSV to /app/datasets/ ──────────────────────────
-        os.makedirs('/app/datasets', exist_ok=True)
-        csv_path = f"/app/datasets/{dataset_name}.csv"
+        # ── Save CSV to Scoped Directory ──────────────────────────
+        user_dir = get_user_dataset_dir(owner_id)
+        csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
         processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
         # ────────────────────────────────────────────────────────
 
@@ -166,8 +175,9 @@ def run_model_training(self, csv_path: str, target_column: str, model_type: str,
         # Execute training
         result = trainer.train_model()
         
-        # Persist to database
-        persist_model_metadata(job_id, result, csv_path, target_column, model_type)
+        # Persist to database (stamp with owner if provided)
+        owner_id = kwargs.get('owner_id') or self.request.kwargs.get('owner_id')
+        persist_model_metadata(job_id, result, csv_path, target_column, model_type, owner_id=owner_id)
 
         # Persist logs if run within a workflow
         workflow_run_id = kwargs.get('workflow_run_id') or self.request.kwargs.get('workflow_run_id')
@@ -331,6 +341,7 @@ def run_workflow(self, workflow_id: int):
 
         dataset_name = workflow['dataset_name']
         stages = workflow['stages']
+        owner_id = workflow.get('owner_id')
 
         publish('started', message=f"Workflow '{workflow['name']}' started")
         add_workflow_log(job_id, 'crawl', f"Workflow '{workflow['name']}' started")
@@ -348,6 +359,7 @@ def run_workflow(self, workflow_id: int):
             crawl_task = celery_app.send_task(
                 'tasks.run_crawl_task',
                 args=[crawl_config],
+                kwargs={'owner_id': owner_id},
                 queue='celery'
             )
             crawl_job_id = crawl_task.id
@@ -385,7 +397,8 @@ def run_workflow(self, workflow_id: int):
             add_workflow_log(job_id, 'crawl', "Crawl stage completed successfully")
 
         # ── Stage 2: Processing ─────────────────────────────────
-        csv_path = os.path.join('/app/datasets', f"{dataset_name}.csv")
+        user_dir = get_user_dataset_dir(owner_id)
+        csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
 
         if stages.get('processing', {}).get('enabled'):
             publish('running', stage='processing', message='Processing stage started')
@@ -406,7 +419,7 @@ def run_workflow(self, workflow_id: int):
 
             archive_processed_data(processed_df, dataset_name, pipeline_config)
 
-            os.makedirs('/app/datasets', exist_ok=True)
+            os.makedirs(user_dir, exist_ok=True)
             processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
 
             row_count = len(processed_df)

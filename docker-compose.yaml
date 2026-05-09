@@ -27,6 +27,7 @@ services:
       - ./scraping module:/app
 
   backend:
+    image: app-backend:latest
     build:
       context: ./backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "__pycache__"
@@ -60,6 +61,7 @@ services:
       - scraper_network
 
   ml_worker:
+    image: app-backend:latest
     build:
       context: ./backend
     command: celery -A tasks worker --loglevel=info -Q ml_tasks --concurrency=4

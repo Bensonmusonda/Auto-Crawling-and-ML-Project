@@ -9,6 +9,27 @@ import {
 import CsvDatasetPicker from './CsvDatasetPicker';
 import PredictionTester from './PredictionTester';
 
+const OwnershipBadge = ({ ownerUsername }) => {
+    if (!ownerUsername) return null;
+    const isShared = ownerUsername === 'admin';
+    return (
+        <span style={{
+            fontSize: '9px',
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: '4px',
+            textTransform: 'uppercase',
+            marginLeft: '8px',
+            verticalAlign: 'middle',
+            backgroundColor: isShared ? 'rgba(255, 255, 255, 0.05)' : 'rgba(79, 70, 229, 0.2)',
+            color: isShared ? 'var(--text-tertiary)' : '#818cf8',
+            border: `1px solid ${isShared ? 'rgba(255, 255, 255, 0.1)' : 'rgba(129, 140, 248, 0.3)'}`
+        }}>
+            {isShared ? 'Shared' : 'Yours'}
+        </span>
+    );
+};
+
 const API_BASE = 'http://localhost:8000';
 
 const METRIC_COLORS = {
@@ -82,7 +103,11 @@ export default function MLTraining() {
 
     const fetchColumns = async (path) => {
         try {
-            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(
+                `${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`,
+                { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            );
             const data = await res.json();
             setAvailableColumns(data.columns || []);
         } catch (_) {
@@ -116,7 +141,10 @@ export default function MLTraining() {
 
     const fetchTrainedModels = async () => {
         try {
-            const res = await fetch(`${API_BASE}/api/ml-training/models/trained?limit=50`);
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${API_BASE}/api/ml-training/models/trained?limit=50`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
             const data = await res.json();
             setTrainedModels(data.models || []);
         } catch (e) {
@@ -647,6 +675,7 @@ export default function MLTraining() {
                                                 </td>
                                                 <td style={{ fontWeight: 500, textTransform: 'capitalize' }}>
                                                     {m.model_type.replace(/_/g, ' ')}
+                                                    <OwnershipBadge ownerUsername={m.owner_username} />
                                                 </td>
                                                 <td>
                                                     <span className="badge badge-neutral">{m.task_type}</span>

@@ -255,7 +255,11 @@ export default function DataProcessing() {
     const fetchColumns = async (path) => {
         if (!path) return;
         try {
-            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(
+                `${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`,
+                { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            );
             const data = await res.json();
             setAvailableColumns(data.columns || []);
         } catch (_) {
@@ -360,9 +364,13 @@ export default function DataProcessing() {
                 return { step: stepId, params };
             });
 
+            const token = localStorage.getItem('auth_token');
             const response = await fetch(`${API_BASE}/api/process`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
                 body: JSON.stringify({ dataset_name: datasetName, steps })
             });
 
@@ -561,7 +569,7 @@ export default function DataProcessing() {
                     )}
 
                     {result && (
-                        <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                        <div className="card" style={{ marginTop: 'var(--space-md)', overflow: 'hidden' }}>
                             <div className="card-header">
                                 <span className="card-title flex-row">
                                     <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />

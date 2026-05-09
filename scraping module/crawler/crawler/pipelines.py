@@ -70,12 +70,13 @@ class PostgresPipeline:
         job_id = item.pop("job_id", "unknown")
         dataset_name = item.pop("dataset_name", "unknown")
         url = item.pop("url", "unknown")
+        owner_id = item.pop("owner_id", None)
 
         try:
             async with self.connection.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO scraped_items (job_id, url, dataset_name, data) VALUES (%s, %s, %s, %s)",
-                    (job_id, url, dataset_name, psycopg.types.json.Jsonb(item))
+                    "INSERT INTO scraped_items (job_id, url, dataset_name, data, owner_id) VALUES (%s, %s, %s, %s, %s)",
+                    (job_id, url, dataset_name, psycopg.types.json.Jsonb(item), owner_id)
                 )
                 await self.connection.commit()
             spider.logger.info(f"✓ Saved item to database: {dataset_name}")

@@ -2,8 +2,8 @@ import os
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List, Optional
 from ml_training_schemas import (
     ModelTrainingRequest,
     ModelTrainingResponse,
@@ -15,7 +15,8 @@ from ml_training_schemas import (
     ModelListFromDBResponse
 )
 from ml_training.registry import ModelRegistry
-from tasks import celery_app  # Your existing celery app
+from tasks import celery_app
+from db_utils import get_optional_user, get_user_dataset_dir, get_admin_id
 
 # Database configuration
 DB_HOST = os.getenv("DB_HOST", "postgres")
@@ -110,15 +111,12 @@ async def suggest_hyperparameters(request: HyperparameterSuggestionRequest):
 
 
 @router.post("/train", response_model=ModelTrainingResponse)
-async def train_model(request: ModelTrainingRequest):
+async def train_model(
+    request: ModelTrainingRequest,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
     Submit a model training job.
-    
-    Args:
-        request: Training configuration including csv_path, target_column, model_type, and params
-        
-    Returns:
-        Job ID and status
     """
     try:
         if request.model_type not in registry.list_models():
@@ -126,41 +124,50 @@ async def train_model(request: ModelTrainingRequest):
                 status_code=400,
                 detail=f"Invalid model type: {request.model_type}"
             )
-        
-        # Validate CSV exists
+
         if not os.path.exists(request.csv_path):
             raise HTTPException(
                 status_code=404,
                 detail=f"CSV file not found: {request.csv_path}"
             )
+            
+        # Security: Ensure the CSV is in a folder the user has access to
+        owner_id = user["id"] if user else None
+        user_dir = get_user_dataset_dir(owner_id)
+        admin_dir = get_user_dataset_dir(1)
         
-        # Handle auto-tuning
+        real_path = os.path.realpath(request.csv_path)
+        allowed_dirs = [os.path.realpath(user_dir), os.path.realpath(admin_dir)]
+        
+        if not any(real_path.startswith(d) for d in allowed_dirs):
+            raise HTTPException(status_code=403, detail="Access to this CSV is restricted")
+
         params = request.params
         if request.auto_tune or params is None or params == "auto":
-            # Load CSV to get dataset characteristics
             df = pd.read_csv(request.csv_path)
             n_samples = len(df)
             n_features = len(df.columns) - 1
-            
             params = registry.suggest_hyperparameters(
                 request.model_type,
                 n_samples=n_samples,
                 n_features=n_features
             )
-        
-        # Submit the Celery task
+
+        owner_id = user["id"] if user else None
+
         task = celery_app.send_task(
             'run_model_training',
             args=[request.csv_path, request.target_column, request.model_type, params],
+            kwargs={'owner_id': owner_id},
             queue='ml_tasks'
         )
-        
+
         return {
             "job_id": task.id,
             "status": "submitted",
             "message": f"Model training job submitted for {request.model_type}"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -168,52 +175,69 @@ async def train_model(request: ModelTrainingRequest):
 
 
 @router.get("/models/trained", response_model=ModelListFromDBResponse)
-async def list_trained_models(limit: int = 50, offset: int = 0):
+async def list_trained_models(
+    limit: int = 50,
+    offset: int = 0,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
-    Get a list of all trained models from the database.
-    
-    Args:
-        limit: Maximum number of models to return
-        offset: Number of models to skip
-        
-    Returns:
-        List of trained models with their metrics
+    Get a list of trained models visible to the current user.
+    Admin sees all; regular users see only their own.
     """
+    if not user:
+        return {"models": [], "total": 0}
     try:
         with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                # Get total count
-                cur.execute("SELECT COUNT(*) as count FROM model_registry")
+                if user.get("is_admin"):
+                    owner_where = ""
+                    count_params: list = []
+                    select_params: list = [limit, offset]
+                else:
+                    owner_where = "WHERE owner_id = %s"
+                    count_params = [user["id"]]
+                    select_params = [user["id"], limit, offset]
+
+                cur.execute(
+                    f"SELECT COUNT(*) as count FROM model_registry {owner_where}",
+                    count_params
+                )
                 total = cur.fetchone()["count"]
-                
-                # Get models
-                cur.execute("""
-                    SELECT 
-                        job_id, model_type, task_type, metrics,
-                        feature_importance, hyperparameters, model_path,
-                        n_samples_train, n_samples_test, n_features,
-                        created_at
-                    FROM model_registry
-                    ORDER BY created_at DESC
+
+                cur.execute(f"""
+                    SELECT
+                        m.job_id, m.model_type, m.task_type, m.metrics,
+                        m.feature_importance, m.hyperparameters, m.model_path,
+                        m.n_samples_train, m.n_samples_test, m.n_features,
+                        m.feature_names, m.target_column, m.source_csv,
+                        m.created_at, u.username as owner_username
+                    FROM model_registry m
+                    LEFT JOIN users u ON m.owner_id = u.id
+                    {owner_where.replace('owner_id', 'm.owner_id')}
+                    ORDER BY m.created_at DESC
                     LIMIT %s OFFSET %s
-                """, (limit, offset))
-                
+                """, select_params)
+
                 models = cur.fetchall()
-                
+
                 return {
                     "models": [
                         {
-                            "job_id": m["job_id"],
-                            "model_type": m["model_type"],
-                            "task_type": m["task_type"],
-                            "metrics": m["metrics"],
+                            "job_id":             m["job_id"],
+                            "model_type":         m["model_type"],
+                            "task_type":          m["task_type"],
+                            "metrics":            m["metrics"],
                             "feature_importance": m["feature_importance"],
-                            "hyperparameters": m["hyperparameters"],
-                            "model_path": m["model_path"],
-                            "n_samples_train": m["n_samples_train"],
-                            "n_samples_test": m["n_samples_test"],
-                            "n_features": m["n_features"],
-                            "created_at": m["created_at"].isoformat()
+                            "hyperparameters":    m["hyperparameters"],
+                            "model_path":         m["model_path"],
+                            "n_samples_train":    m["n_samples_train"],
+                            "n_samples_test":     m["n_samples_test"],
+                            "n_features":         m["n_features"],
+                            "feature_names":      m["feature_names"],
+                            "target_column":      m["target_column"],
+                            "source_csv":         m["source_csv"],
+                            "created_at":         m["created_at"].isoformat(),
+                            "owner_username":     m["owner_username"]
                         }
                         for m in models
                     ],
@@ -242,7 +266,7 @@ async def get_model_details(job_id: str):
                         job_id, model_type, task_type, metrics,
                         feature_importance, hyperparameters, model_path,
                         n_samples_train, n_samples_test, n_features, feature_names,
-                        created_at
+                        target_column, source_csv, created_at
                     FROM model_registry
                     WHERE job_id = %s
                 """, (job_id,))
@@ -264,6 +288,8 @@ async def get_model_details(job_id: str):
                     "n_samples_test": model["n_samples_test"],
                     "n_features": model["n_features"],
                     "feature_names": model["feature_names"],
+                    "target_column": model["target_column"],
+                    "source_csv": model["source_csv"],
                     "created_at": model["created_at"].isoformat()
                 }
     except HTTPException:
@@ -273,11 +299,23 @@ async def get_model_details(job_id: str):
 
 
 @router.get("/configs/{dataset_name}")
-async def get_ml_training_configs(dataset_name: str):
+async def get_ml_training_configs(
+    dataset_name: str,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
-    Get past successful training configurations for a given dataset.
+    Get past successful training configurations for a given dataset using scoped paths.
     """
-    csv_path = f"/app/datasets/{dataset_name}.csv"
+    owner_id = user["id"] if user else None
+    user_dir = get_user_dataset_dir(owner_id)
+    admin_id = await get_admin_id()
+    admin_dir = get_user_dataset_dir(admin_id)
+    
+    # Try user scoped path first, then admin path
+    csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(admin_dir, f"{dataset_name}.csv")
+
     try:
         with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
             with conn.cursor() as cur:

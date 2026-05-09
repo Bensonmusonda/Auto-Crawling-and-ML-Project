@@ -35,6 +35,8 @@ pydantic-settings==2.13.1
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
+
 
 # Documentation
 marko==2.1.2

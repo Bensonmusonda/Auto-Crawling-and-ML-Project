@@ -1,6 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, RefreshCw, Plus, Trash2, Wifi, WifiOff } from 'lucide-react';
 
+const OwnershipBadge = ({ ownerUsername }) => {
+    if (!ownerUsername) return null;
+    const isShared = ownerUsername === 'admin';
+    return (
+        <span style={{
+            fontSize: '9px',
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: '4px',
+            textTransform: 'uppercase',
+            marginLeft: '8px',
+            verticalAlign: 'middle',
+            backgroundColor: isShared ? 'rgba(255, 255, 255, 0.05)' : 'rgba(79, 70, 229, 0.2)',
+            color: isShared ? 'var(--text-tertiary)' : '#818cf8',
+            border: `1px solid ${isShared ? 'rgba(255, 255, 255, 0.1)' : 'rgba(129, 140, 248, 0.3)'}`
+        }}>
+            {isShared ? 'Shared' : 'Yours'}
+        </span>
+    );
+};
+
 const API_BASE = 'http://localhost:8000';
 
 export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], onClearEvents }) {
@@ -126,14 +147,14 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                         </div>
                     </div>
                 ) : (
-                    <div style={{
-                        maxHeight: 260,
-                        overflowY: 'auto',
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(2, 1fr)',
-                        gap: 'var(--space-md)',
-                        paddingRight: 4  /* prevents scrollbar from overlapping cards */
-                    }}>
+                    <div 
+                        className="responsive-grid"
+                        style={{
+                            maxHeight: 260,
+                            overflowY: 'auto',
+                            paddingRight: 4  /* prevents scrollbar from overlapping cards */
+                        }}
+                    >
                         {liveJobsList.map(job => (
                             <div key={job.job_id} className="card">
                                 <div className="card-header">
@@ -173,7 +194,7 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                 )}
             </div>
 
-            <div className="grid-2" style={{ alignItems: 'start' }}>
+            <div className="monitor-layout">
                 {/* ── Left: History + Event Log ── */}
                 <div>
                     <div className="card" style={{ marginBottom: 'var(--space-md)' }}>
@@ -209,7 +230,10 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                                         </tr>
                                     ) : jobHistory.map((job, i) => (
                                         <tr key={i}>
-                                            <td style={{ fontWeight: 500 }}>{job.dataset_name}</td>
+                                            <td style={{ fontWeight: 500 }}>
+                                                {job.dataset_name}
+                                                <OwnershipBadge ownerUsername={job.owner_username} />
+                                            </td>
                                             <td className="mono">{job.item_count}</td>
                                             <td style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
                                                 {job.started_at

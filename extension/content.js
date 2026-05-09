@@ -398,6 +398,9 @@ function generateRelativeSelectors(element, container) {
   // Strategy 6: Data attribute
   const dataAttr = generateDataAttributeSelector(element);
   
+  // Strategy 7: Label-Aware XPath (Smart Selector)
+  const labelXPath = generateLabelAwareXPath(element, container, path);
+  
   // Choose best primary selector
   let primary = simpleClass || tagClass || cssPath;
   
@@ -416,8 +419,85 @@ function generateRelativeSelectors(element, container) {
     cssPath: cssPath,
     descendant: descendant,
     xpath: xpath,
+    labelXPath: labelXPath,
     dataAttr: dataAttr
   };
+}
+
+function generateLabelAwareXPath(element, container, path) {
+  if (!path || path.length === 0) return null;
+  
+  let labelNode = null;
+  let labelText = '';
+  
+  let current = element;
+  while (current && current !== container) {
+    let prev = current.previousElementSibling;
+    while (prev) {
+      const text = prev.innerText?.trim() || prev.textContent?.trim();
+      if (text && text.length > 0 && text.length < 30 && !/^[\d.,]+$/.test(text)) {
+        labelNode = prev;
+        labelText = text;
+        break;
+      }
+      prev = prev.previousElementSibling;
+    }
+    if (labelNode) break;
+    
+    if (current.parentElement) {
+      const siblings = Array.from(current.parentElement.children);
+      for (let sib of siblings) {
+        if (sib === current) continue;
+        if (sib.tagName === 'TH' || sib.tagName === 'DT' || sib.tagName === 'LABEL' || /label|lbl|title|name|key/i.test(sib.className || '')) {
+          const text = sib.innerText?.trim() || sib.textContent?.trim();
+          if (text && text.length > 0 && text.length < 30 && !/^[\d.,]+$/.test(text)) {
+            labelNode = sib;
+            labelText = text;
+            break;
+          }
+        }
+      }
+    }
+    if (labelNode) break;
+    
+    current = current.parentElement;
+  }
+  
+  if (!labelNode) return null;
+  
+  labelText = labelText.replace(/[:"\n\t\r]/g, '').trim();
+  if (!labelText || labelText.length > 30 || labelText.includes("'")) return null;
+  
+  let lca = element.parentElement;
+  while (lca && lca !== container) {
+    if (lca.contains(labelNode)) break;
+    lca = lca.parentElement;
+  }
+  
+  if (!lca || lca === container) return null;
+  
+  const xpathParts = path.map(node => {
+    const tag = node.tagName.toLowerCase();
+    const classes = getStableClasses(node);
+    let part = tag;
+    
+    let conditions = [];
+    if (classes.length > 0) {
+      conditions.push(`contains(@class, '${classes[0]}')`);
+    }
+    
+    if (node === lca) {
+      conditions.push(`contains(., '${labelText}')`);
+    }
+    
+    if (conditions.length > 0) {
+      part += `[${conditions.join(' and ')}]`;
+    }
+    
+    return part;
+  });
+  
+  return './' + xpathParts.join('/');
 }
 
 // ============================================================================

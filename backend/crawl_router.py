@@ -3,8 +3,10 @@ import json
 import psycopg
 from psycopg.rows import dict_row
 import redis.asyncio as redis
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
 from schemas import CrawlRequest, SiteTierConfig
+from db_utils import get_optional_user
 
 router = APIRouter(prefix="/api/crawl", tags=["crawl"])
 
@@ -19,11 +21,15 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 
 @router.post("")
-async def send_crawl_task(config_request: CrawlRequest):
+async def send_crawl_task(
+    config_request: CrawlRequest,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     from tasks import celery_app
 
     json_config = config_request.model_dump()
-    result = celery_app.send_task("tasks.run_crawl_task", args=(json_config,))
+    owner_id = user["id"] if user else None
+    result = celery_app.send_task("tasks.run_crawl_task", args=(json_config,), kwargs={"owner_id": owner_id})
 
     # Persist crawl config for workflow pre-filling
     async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
@@ -33,22 +39,20 @@ async def send_crawl_task(config_request: CrawlRequest):
                     job_id VARCHAR(255) PRIMARY KEY,
                     dataset_name VARCHAR(255),
                     config JSONB,
+                    owner_id INTEGER REFERENCES users(id),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             await cur.execute(
                 """
-                INSERT INTO crawl_jobs (job_id, dataset_name, config)
-                VALUES (%s, %s, %s)
+                INSERT INTO crawl_jobs (job_id, dataset_name, config, owner_id)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (job_id) DO NOTHING
                 """,
-                (result.id, config_request.dataset_name, json.dumps(json_config)),
+                (result.id, config_request.dataset_name, json.dumps(json_config), owner_id),
             )
             await conn.commit()
 
-    # NOTE: Live events are streamed via /websocket/crawl_events.
-    # Do NOT spawn a monitor task here — it creates a Redis connection
-    # leak that never terminates.
     return {"started crawl job": result.id}
 
 
@@ -72,24 +76,37 @@ async def get_crawl_configs(dataset_name: str):
 
 
 @router.get("/jobs")
-async def get_crawl_jobs():
+async def get_crawl_jobs(
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    if not user:
+        return []
     async with await psycopg.AsyncConnection.connect(
         DATABASE_URL, row_factory=dict_row
     ) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("""
+            if user.get("is_admin"):
+                owner_filter = ""
+                params = []
+            else:
+                owner_filter = "WHERE si.owner_id = %s"
+                params = [user["id"]]
+
+            await cur.execute(f"""
                 SELECT
-                    job_id,
-                    dataset_name,
+                    si.job_id,
+                    si.dataset_name,
                     COUNT(*)        AS item_count,
-                    MIN(created_at) AS started_at,
-                    MAX(created_at) AS last_seen_at
-                FROM scraped_items
-                WHERE job_id IS NOT NULL
-                GROUP BY job_id, dataset_name
-                ORDER BY MAX(created_at) DESC
+                    MIN(si.created_at) AS started_at,
+                    MAX(si.created_at) AS last_seen_at,
+                    u.username      AS owner_username
+                FROM scraped_items si
+                LEFT JOIN users u ON si.owner_id = u.id
+                {owner_filter}
+                GROUP BY si.job_id, si.dataset_name, u.username
+                ORDER BY MAX(si.created_at) DESC
                 LIMIT 100
-            """)
+            """, params)
             return await cur.fetchall()
 
 

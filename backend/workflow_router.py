@@ -2,7 +2,10 @@ import os
 import json
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
+
+from db_utils import get_optional_user
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -13,6 +16,7 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
 
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
 
 async def ensure_workflows_table():
     async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
@@ -25,68 +29,88 @@ async def ensure_workflows_table():
                     stages JSONB NOT NULL,
                     last_run_at TIMESTAMP,
                     last_run_status VARCHAR(50),
+                    owner_id INTEGER REFERENCES users(id),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             await conn.commit()
 
+
+def _visibility_filter(user: Optional[dict]) -> tuple[str, list]:
+    """
+    Returns an SQL WHERE clause fragment and its bind values.
+    - Admin  →  no filter (sees everything)
+    - User   →  only their own rows
+    - None   →  no rows
+    """
+    if not user:
+        return "FALSE", []
+    if user.get("is_admin"):
+        return "TRUE", []
+    return "w.owner_id = %s", [user["id"]]
+
+
 @router.post("")
-async def create_workflow(payload: dict):
+async def create_workflow(
+    payload: dict,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     await ensure_workflows_table()
-    name = payload.get('name')
-    dataset_name = payload.get('dataset_name')
-    stages = payload.get('stages')
+    name         = payload.get("name")
+    dataset_name = payload.get("dataset_name")
+    stages       = payload.get("stages")
 
     if not all([name, dataset_name, stages]):
         raise HTTPException(400, "name, dataset_name and stages are required")
 
+    owner_id = user["id"] if user else None
+
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
             await cur.execute("""
-                INSERT INTO workflows (name, dataset_name, stages)
-                VALUES (%s, %s, %s)
-                RETURNING id, name, dataset_name, stages, last_run_at, last_run_status, created_at
-            """, (name, dataset_name, json.dumps(stages)))
+                INSERT INTO workflows (name, dataset_name, stages, owner_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING
+                    id, name, dataset_name, stages,
+                    last_run_at, last_run_status, created_at, owner_id
+            """, (name, dataset_name, json.dumps(stages), owner_id))
             row = await cur.fetchone()
             await conn.commit()
             return row
 
 
 @router.post("/from-past-runs")
-async def create_workflow_from_past_runs(payload: dict):
+async def create_workflow_from_past_runs(
+    payload: dict,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """
     Creates a new workflow by stitching together configurations from past standalone jobs.
-    Payload:
-    {
-        "name": "Workflow Name",
-        "dataset_name": "dataset",
-        "stages_to_include": {
-            "crawl_job_id": "abc-123",
-            "process_job_id": "proc-xyz",
-            "train_job_id": "train-456"
-        }
-    }
     """
     await ensure_workflows_table()
-    name = payload.get('name')
-    dataset_name = payload.get('dataset_name')
-    stages_to_include = payload.get('stages_to_include', {})
+    name             = payload.get("name")
+    dataset_name     = payload.get("dataset_name")
+    stages_to_include = payload.get("stages_to_include", {})
 
     if not all([name, dataset_name]):
         raise HTTPException(400, "name and dataset_name are required")
 
+    owner_id = user["id"] if user else None
+
     stages = {
-        "crawl": {"enabled": False, "config": {}},
+        "crawl":      {"enabled": False, "config": {}},
         "processing": {"enabled": False, "config": {"steps": []}},
-        "ml": {"enabled": False, "config": {}}
+        "ml":         {"enabled": False, "config": {}},
     }
 
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
             # 1. Fetch Crawl Config
-            crawl_id = stages_to_include.get('crawl_job_id')
+            crawl_id = stages_to_include.get("crawl_job_id")
             if crawl_id:
-                await cur.execute("SELECT config FROM crawl_jobs WHERE job_id = %s", (crawl_id,))
+                await cur.execute(
+                    "SELECT config FROM crawl_jobs WHERE job_id = %s", (crawl_id,)
+                )
                 row = await cur.fetchone()
                 if row:
                     stages["crawl"]["enabled"] = True
@@ -95,9 +119,8 @@ async def create_workflow_from_past_runs(payload: dict):
                     raise HTTPException(404, f"Crawl job {crawl_id} not found")
 
             # 2. Fetch Process Config
-            proc_id = stages_to_include.get('process_job_id')
+            proc_id = stages_to_include.get("process_job_id")
             if proc_id:
-                # Ensure table exists first just in case
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS processing_jobs (
                         job_id VARCHAR(255) PRIMARY KEY,
@@ -106,7 +129,9 @@ async def create_workflow_from_past_runs(payload: dict):
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
-                await cur.execute("SELECT config FROM processing_jobs WHERE job_id = %s", (proc_id,))
+                await cur.execute(
+                    "SELECT config FROM processing_jobs WHERE job_id = %s", (proc_id,)
+                )
                 row = await cur.fetchone()
                 if row:
                     stages["processing"]["enabled"] = True
@@ -115,59 +140,80 @@ async def create_workflow_from_past_runs(payload: dict):
                     raise HTTPException(404, f"Processing job {proc_id} not found")
 
             # 3. Fetch Train Config
-            train_id = stages_to_include.get('train_job_id')
+            train_id = stages_to_include.get("train_job_id")
             if train_id:
                 await cur.execute("""
-                    SELECT model_type, hyperparameters as params, target_column 
-                    FROM model_registry 
+                    SELECT model_type, hyperparameters as params, target_column
+                    FROM model_registry
                     WHERE job_id = %s
                 """, (train_id,))
                 row = await cur.fetchone()
                 if row:
                     stages["ml"]["enabled"] = True
                     stages["ml"]["config"] = {
-                        "model_type": row["model_type"],
+                        "model_type":    row["model_type"],
                         "target_column": row["target_column"],
-                        "params": row["params"],
-                        "auto_tune": False
+                        "params":        row["params"],
+                        "auto_tune":     False,
                     }
                 else:
                     raise HTTPException(404, f"Training job {train_id} not found")
 
-            # Validate at least one stage is enabled
             if not any(s["enabled"] for s in stages.values()):
-                raise HTTPException(400, "At least one valid job ID must be provided to create a workflow")
+                raise HTTPException(
+                    400,
+                    "At least one valid job ID must be provided to create a workflow",
+                )
 
-            # Save the workflow
             await cur.execute("""
-                INSERT INTO workflows (name, dataset_name, stages)
-                VALUES (%s, %s, %s)
-                RETURNING id, name, dataset_name, stages, last_run_at, last_run_status, created_at
-            """, (name, dataset_name, json.dumps(stages)))
-            
+                INSERT INTO workflows (name, dataset_name, stages, owner_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING
+                    id, name, dataset_name, stages,
+                    last_run_at, last_run_status, created_at, owner_id
+            """, (name, dataset_name, json.dumps(stages), owner_id))
+
             created_row = await cur.fetchone()
             await conn.commit()
             return created_row
 
 
 @router.get("")
-async def list_workflows():
+async def list_workflows(
+    user: Optional[dict] = Depends(get_optional_user),
+):
     await ensure_workflows_table()
+    where_clause, bind_vals = _visibility_filter(user)
+
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("""
-                SELECT id, name, dataset_name, stages,
-                       last_run_at, last_run_status, created_at
-                FROM workflows ORDER BY created_at DESC
-            """)
+            await cur.execute(f"""
+                SELECT
+                    w.id, w.name, w.dataset_name, w.stages,
+                    w.last_run_at, w.last_run_status, w.created_at,
+                    w.owner_id, u.username AS owner_username
+                FROM workflows w
+                LEFT JOIN users u ON w.owner_id = u.id
+                WHERE {where_clause}
+                ORDER BY w.created_at DESC
+            """, bind_vals)
             return await cur.fetchall()
 
 
 @router.get("/{workflow_id}")
-async def get_workflow(workflow_id: int):
+async def get_workflow(
+    workflow_id: int,
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    where_clause, bind_vals = _visibility_filter(user)
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT * FROM workflows WHERE id = %s", (workflow_id,))
+            await cur.execute(f"""
+                SELECT w.*, u.username AS owner_username
+                FROM workflows w
+                LEFT JOIN users u ON w.owner_id = u.id
+                WHERE w.id = %s AND ({where_clause})
+            """, [workflow_id] + bind_vals)
             row = await cur.fetchone()
             if not row:
                 raise HTTPException(404, "Workflow not found")
@@ -175,68 +221,90 @@ async def get_workflow(workflow_id: int):
 
 
 @router.put("/{workflow_id}")
-async def update_workflow(workflow_id: int, payload: dict):
+async def update_workflow(
+    workflow_id: int,
+    payload: dict,
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    where_clause, bind_vals = _visibility_filter(user)
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("""
+            await cur.execute(f"""
                 UPDATE workflows
-                SET name = COALESCE(%s, name),
+                SET name         = COALESCE(%s, name),
                     dataset_name = COALESCE(%s, dataset_name),
-                    stages = COALESCE(%s::jsonb, stages)
-                WHERE id = %s
+                    stages       = COALESCE(%s::jsonb, stages)
+                WHERE id = %s AND ({where_clause})
                 RETURNING *
             """, (
-                payload.get('name'),
-                payload.get('dataset_name'),
-                json.dumps(payload['stages']) if 'stages' in payload else None,
-                workflow_id
+                payload.get("name"),
+                payload.get("dataset_name"),
+                json.dumps(payload["stages"]) if "stages" in payload else None,
+                workflow_id,
+                *bind_vals,
             ))
             row = await cur.fetchone()
             await conn.commit()
             if not row:
-                raise HTTPException(404, "Workflow not found")
+                raise HTTPException(404, "Workflow not found or access denied")
             return row
 
 
 @router.delete("/{workflow_id}")
-async def delete_workflow(workflow_id: int):
+async def delete_workflow(
+    workflow_id: int,
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    where_clause, bind_vals = _visibility_filter(user)
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                "DELETE FROM workflows WHERE id = %s RETURNING id", (workflow_id,)
-            )
+            await cur.execute(f"""
+                DELETE FROM workflows
+                WHERE id = %s AND ({where_clause})
+                RETURNING id
+            """, [workflow_id] + bind_vals)
             row = await cur.fetchone()
             await conn.commit()
             if not row:
-                raise HTTPException(404, "Workflow not found")
+                raise HTTPException(404, "Workflow not found or access denied")
             return {"deleted": workflow_id}
 
 
 @router.post("/{workflow_id}/run")
-async def run_workflow(workflow_id: int):
+async def run_workflow(
+    workflow_id: int,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     from tasks import celery_app
-    # Verify workflow exists
+    where_clause, bind_vals = _visibility_filter(user)
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT id, name FROM workflows WHERE id = %s", (workflow_id,))
+            await cur.execute(f"""
+                SELECT id, name FROM workflows
+                WHERE id = %s AND ({where_clause})
+            """, [workflow_id] + bind_vals)
             row = await cur.fetchone()
             if not row:
-                raise HTTPException(404, "Workflow not found")
+                raise HTTPException(404, "Workflow not found or access denied")
 
     task = celery_app.send_task(
-        'run_workflow',
+        "run_workflow",
         args=[workflow_id],
-        queue='ml_tasks'
+        kwargs={'owner_id': user["id"] if user else None},
+        queue="ml_tasks",
     )
     return {"job_id": task.id, "workflow_id": workflow_id, "status": "submitted"}
 
 
 @router.get("/{workflow_id}/history")
-async def get_workflow_history(workflow_id: int, limit: int = 5):
+async def get_workflow_history(
+    workflow_id: int,
+    limit: int = 5,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     """Return the last N run records for a workflow, newest first."""
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            # Ensure table exists (handles first request before any run)
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
                     id            SERIAL PRIMARY KEY,
@@ -275,15 +343,15 @@ async def get_workflow_history(workflow_id: int, limit: int = 5):
             duration = f"{total_seconds // 60}m {total_seconds % 60}s"
 
         result.append({
-            "run_id": row["run_id"],
-            "status": row["status"],
-            "crawl_job_id": row["crawl_job_id"],
-            "model_job_id": row["model_job_id"],
-            "output_csv": row["output_csv"],
+            "run_id":        row["run_id"],
+            "status":        row["status"],
+            "crawl_job_id":  row["crawl_job_id"],
+            "model_job_id":  row["model_job_id"],
+            "output_csv":    row["output_csv"],
             "stage_results": row["stage_results"],
-            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
-            "duration": duration,
+            "started_at":    row["started_at"].isoformat() if row["started_at"] else None,
+            "finished_at":   row["finished_at"].isoformat() if row["finished_at"] else None,
+            "duration":      duration,
         })
 
     return result
@@ -301,14 +369,13 @@ async def get_stage_logs(run_id: str, stage: str):
                 ORDER BY timestamp ASC
             """, (run_id, stage))
             rows = await cur.fetchall()
-            
-    # Format for frontend
+
     logs = []
     for row in rows:
         logs.append({
-            "level": row["level"],
-            "message": row["message"],
-            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None
+            "level":     row["level"],
+            "message":   row["message"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
         })
-        
+
     return {"logs": logs}

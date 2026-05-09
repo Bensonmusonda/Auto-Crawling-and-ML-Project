@@ -10,13 +10,11 @@ import psycopg
 import uuid
 
 from ml_processor.core import UniversalEngine
+from db_utils import get_optional_user, get_user_dataset_dir, DATABASE_URL as DB_URL_FROM_UTILS
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Depends
 
-router = APIRouter(prefix="/api/process", tags=["Engine"])
-
-DB_URL = (
-    f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
+DB_URL = DB_URL_FROM_UTILS
 
 
 class PipelineStep(BaseModel):
@@ -30,8 +28,12 @@ class ProcessRequest(BaseModel):
 
 
 @router.post("/execute")
-async def execute_processing(request: ProcessRequest):
+async def execute_processing(
+    request: ProcessRequest,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     connection = None
+    owner_id = user["id"] if user else None
     try:
         # 1. Fetch data from Postgres
         connection = await psycopg.AsyncConnection.connect(conninfo=DB_URL)
@@ -49,14 +51,32 @@ async def execute_processing(request: ProcessRequest):
         # 2. Convert to DataFrame
         df = pd.DataFrame(rows)
 
-        # 3. Run the UniversalEngine pipeline
-        pipeline_dicts = [step.model_dump() for step in request.pipeline]
+        # 3. Fetch any previously applied operations for this dataset and accumulate.
+        #    This ensures that adding a forgotten step later still produces a correct
+        #    full pipeline (raw data is always the starting point).
+        existing_ops = []
+        async with connection.cursor() as cur:
+            await cur.execute("""
+                SELECT operations_applied FROM processed_items
+                WHERE source_dataset = %s
+                ORDER BY processed_at DESC
+                LIMIT 1
+            """, (request.dataset_name,))
+            prev = await cur.fetchone()
+            if prev and prev[0]:
+                ops = prev[0]
+                existing_ops = ops if isinstance(ops, list) else json.loads(ops)
+
+        new_ops = [step.model_dump() for step in request.pipeline]
+        # Full accumulated pipeline: previous steps first, new steps appended
+        pipeline_dicts = existing_ops + new_ops
+
         engine = UniversalEngine(df)
         processed_df, logs = engine.run_pipeline(pipeline_dicts)
 
-        # 4. Save processed CSV to /app/datasets/ for ML training
-        os.makedirs("/app/datasets", exist_ok=True)
-        csv_path = f"/app/datasets/{request.dataset_name}.csv"
+        # 4. Save processed CSV to Scoped Directory for ML training
+        target_dir = get_user_dataset_dir(owner_id)
+        csv_path = os.path.join(target_dir, f"{request.dataset_name}.csv")
         processed_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
         
         job_id = f"proc_{uuid.uuid4().hex[:12]}"
@@ -67,6 +87,8 @@ async def execute_processing(request: ProcessRequest):
 
         df_clean = processed_df.replace([np.nan, np.inf, -np.inf], None)
         records_out = df_clean.to_dict(orient="records")
+        # Store the FULL accumulated pipeline so predict_router always gets the
+        # complete list when it queries by dataset name.
         config_json = json.dumps(pipeline_dicts)
 
         async with connection.cursor() as cur:
@@ -77,21 +99,27 @@ async def execute_processing(request: ProcessRequest):
                     operations_applied JSONB,
                     data JSONB,
                     row_hash TEXT,
+                    owner_id INTEGER REFERENCES users(id),
                     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+            """)
+            # Also add owner_id if it's missing (idempotent)
+            await cur.execute("""
+                ALTER TABLE processed_items ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)
             """)
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS processing_jobs (
                     job_id VARCHAR(255) PRIMARY KEY,
                     dataset_name VARCHAR(255),
                     config JSONB,
+                    owner_id INTEGER REFERENCES users(id),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             await cur.execute("""
-                INSERT INTO processing_jobs (job_id, dataset_name, config)
-                VALUES (%s, %s, %s)
-            """, (job_id, request.dataset_name, config_json))
+                INSERT INTO processing_jobs (job_id, dataset_name, config, owner_id)
+                VALUES (%s, %s, %s, %s)
+            """, (job_id, request.dataset_name, config_json, owner_id))
 
             for record in records_out:
                 record_json = json.dumps(record, sort_keys=True, separators=(",", ":"))
@@ -99,10 +127,10 @@ async def execute_processing(request: ProcessRequest):
                 await cur.execute(
                     """
                     INSERT INTO processed_items
-                        (source_dataset, operations_applied, data, row_hash)
-                    VALUES (%s, %s, %s, %s)
+                        (source_dataset, operations_applied, data, row_hash, owner_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (request.dataset_name, config_json, json.dumps(record), row_hash),
+                    (request.dataset_name, config_json, json.dumps(record), row_hash, owner_id),
                 )
             await connection.commit()
 
@@ -128,7 +156,10 @@ async def execute_processing(request: ProcessRequest):
 
 
 @router.get("/configs/{dataset_name}")
-async def get_processing_configs(dataset_name: str):
+async def get_processing_configs(
+    dataset_name: str,
+    user: Optional[dict] = Depends(get_optional_user),
+):
     from psycopg.rows import dict_row
     async with await psycopg.AsyncConnection.connect(
         DB_URL, row_factory=dict_row
@@ -148,8 +179,8 @@ async def get_processing_configs(dataset_name: str):
             await cur.execute("""
                 SELECT job_id, dataset_name, config, created_at
                 FROM processing_jobs
-                WHERE dataset_name = %s
+                WHERE dataset_name = %s AND (owner_id = %s OR owner_id = 1)
                 ORDER BY created_at DESC
                 LIMIT 10
-            """, (dataset_name,))
+            """, (dataset_name, user["id"] if user else None))
             return await cur.fetchall()

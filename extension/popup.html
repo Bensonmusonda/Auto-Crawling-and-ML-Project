@@ -545,6 +545,47 @@
       color: #666;
       white-space: nowrap;
     }
+
+    /* Auth Section */
+    .auth-section {
+      background: white;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px;
+      background: white;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      border: 1px solid #e0e0e0;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .user-avatar {
+      width: 24px;
+      height: 24px;
+      background: #2a2a2a;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
   </style>
 </head>
 <body>
@@ -554,8 +595,25 @@
   </div>
 
   <div class="container">
-    <!-- Wizard Navigation -->
-    <div class="wizard-nav">
+    <!-- Auth Status / Login -->
+    <div id="auth-unauthenticated" class="auth-form">
+        <div class="input-label">Login to secure your data</div>
+        <input type="text" id="auth-username" class="input-field" placeholder="Username">
+        <input type="password" id="auth-password" class="input-field" placeholder="Password">
+        <button id="btn-login" class="btn btn-primary btn-block">Login</button>
+    </div>
+
+    <div id="auth-authenticated" class="auth-section hidden">
+        <div class="user-info">
+            <div class="user-avatar" id="user-initials">?</div>
+            <span id="display-username">Username</span>
+        </div>
+        <button id="btn-logout" class="btn btn-secondary btn-sm">Sign Out</button>
+    </div>
+
+    <div id="wizard-container" class="hidden">
+        <!-- Wizard Navigation -->
+        <div class="wizard-nav">
       <div class="wizard-step active" data-step="setup">
         <span class="step-number">01</span>
         <span>Setup</span>
@@ -770,6 +828,7 @@
       <button id="btnBackToAdvanced" class="btn btn-secondary btn-block mt-2">Back</button>
     </div>
   </div>
+</div>
 
   <script src="config-manager.js"></script>
   <script src="popup.js"></script>

@@ -30,6 +30,7 @@ class UniversalSpider(scrapy.Spider):
         self.link_selector = self.config.get("link_selector")
         self.item_selectors = self.config["item_selectors"]
         self.container_selector = self.config.get("container_selector")
+        self.owner_id = self.config.get("owner_id")
 
         self.r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
 
@@ -242,15 +243,49 @@ class UniversalSpider(scrapy.Spider):
         if not self.link_selector:
             return
 
-        links = response.css(self.link_selector)
-        for link in links:
-            url = link.attrib.get("href") or link.css("::attr(href)").get()
-            if url:
-                yield response.follow(
-                    url,
+        original_url = response.meta.get("original_url", response.url)
+        using_scraperapi = response.meta.get("using_scraperapi", False)
+        using_hybrid = response.meta.get("using_hybrid", False)
+        using_playwright = response.meta.get("using_playwright", False)
+
+        def process_url(raw_url):
+            absolute_url = urljoin(original_url, raw_url)
+            meta = response.meta.copy()
+            meta["original_url"] = absolute_url
+            
+            if using_playwright:
+                return scrapy.Request(
+                    absolute_url,
                     callback=self.parse_detail,
-                    meta=response.meta  # Preserve context
+                    meta=meta,
+                    errback=self.errback_playwright
                 )
+            elif using_hybrid:
+                # Detail pages don't have the list container, just render
+                api_url = self.build_scraperapi_url(absolute_url, render=True)
+                return scrapy.Request(api_url, callback=self.parse_detail, meta=meta)
+            elif using_scraperapi and self.should_use_scraperapi(absolute_url):
+                api_url = self.build_scraperapi_url(absolute_url, render=False)
+                return scrapy.Request(api_url, callback=self.parse_detail, meta=meta)
+            else:
+                return scrapy.Request(absolute_url, callback=self.parse_detail, meta=meta)
+
+        # If a container is defined, restrict link extraction to within those containers
+        if self.container_selector:
+            containers = response.css(self.container_selector)
+            for container in containers:
+                links = container.css(self.link_selector)
+                for link in links:
+                    url = link.attrib.get("href") or link.css("::attr(href)").get()
+                    if url:
+                        yield process_url(url)
+        else:
+            # Fallback for old configurations without a container
+            links = response.css(self.link_selector)
+            for link in links:
+                url = link.attrib.get("href") or link.css("::attr(href)").get()
+                if url:
+                    yield process_url(url)
 
     def parse_detail(self, response: Response):
         self.pages_crawled += 1
@@ -406,7 +441,8 @@ class UniversalSpider(scrapy.Spider):
         item.update({
             "job_id": self.job_id,
             "dataset_name": self.dataset_name,
-            "url": url
+            "url": url,
+            "owner_id": self.owner_id
         })
 
         return item

@@ -15,7 +15,10 @@ export default function CsvDatasetPicker({ value, onChange, label = "Dataset" })
     const fetchDatasets = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/datasets/csv-list`);
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${API_BASE}/api/datasets/csv-list`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
             const data = await res.json();
             setDatasets(data);
         } catch (e) {

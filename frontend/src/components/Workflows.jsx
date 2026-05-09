@@ -4,6 +4,29 @@ import {
 } from 'lucide-react';
 import WorkflowDetail from './WorkflowDetail';
 
+const OwnershipBadge = ({ ownerUsername }) => {
+  if (!ownerUsername) return null;
+  // If we don't have is_admin info here, we assume 'admin' username is shared
+  const isShared = ownerUsername === 'admin';
+  
+  return (
+    <span style={{
+      fontSize: '9px',
+      fontWeight: 700,
+      padding: '2px 6px',
+      borderRadius: '4px',
+      textTransform: 'uppercase',
+      marginLeft: '8px',
+      verticalAlign: 'middle',
+      backgroundColor: isShared ? 'rgba(255, 255, 255, 0.05)' : 'rgba(79, 70, 229, 0.2)',
+      color: isShared ? 'var(--text-tertiary)' : '#818cf8',
+      border: `1px solid ${isShared ? 'rgba(255, 255, 255, 0.1)' : 'rgba(129, 140, 248, 0.3)'}`
+    }}>
+      {isShared ? 'Shared' : 'Yours'}
+    </span>
+  );
+};
+
 const API_BASE = 'http://localhost:8000';
 
 const AVAILABLE_STEPS = [
@@ -968,6 +991,7 @@ export default function Workflows({ wsEvents = [] }) {
                                             title="View details"
                                         >
                                             {wf.name}
+                                            <OwnershipBadge ownerUsername={wf.owner_username} />
                                             <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>↗</span>
                                         </div>
                                         <div style={{

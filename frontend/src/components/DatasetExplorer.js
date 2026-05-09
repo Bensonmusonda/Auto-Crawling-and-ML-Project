@@ -2,8 +2,29 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Papa from 'papaparse';
 import {
     Database, Download, ChevronLeft, ChevronRight,
-    Search, Table, AlertCircle, Upload, CheckCircle
+    Search, Table, AlertCircle, Upload, CheckCircle, Trash2, X
 } from 'lucide-react';
+
+const OwnershipBadge = ({ ownerUsername }) => {
+    if (!ownerUsername) return null;
+    const isShared = ownerUsername === 'admin';
+    return (
+        <span style={{
+            fontSize: '9px',
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: '4px',
+            textTransform: 'uppercase',
+            marginLeft: '8px',
+            verticalAlign: 'middle',
+            backgroundColor: isShared ? 'rgba(255, 255, 255, 0.05)' : 'rgba(79, 70, 229, 0.2)',
+            color: isShared ? 'var(--text-tertiary)' : '#818cf8',
+            border: `1px solid ${isShared ? 'rgba(255, 255, 255, 0.1)' : 'rgba(129, 140, 248, 0.3)'}`
+        }}>
+            {isShared ? 'Shared' : 'Yours'}
+        </span>
+    );
+};
 
 const API_BASE = 'http://localhost:8000';
 const ROWS_PER_PAGE = 25;
@@ -22,6 +43,10 @@ export default function DatasetExplorer() {
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [showSaveInput, setShowSaveInput] = useState(false);
+    const [saveName, setSaveName] = useState('');
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleting, setDeleting] = useState(false);
 
     useEffect(() => {
         fetchDatasets();
@@ -45,17 +70,23 @@ export default function DatasetExplorer() {
         setSelectedDataset(datasetName);
     }, []);
 
+    const openSaveInput = () => {
+        setSaveName(selectedDataset || '');
+        setShowSaveInput(true);
+        setSaveSuccess(false);
+    };
+
     const saveToMLDatasets = async () => {
         if (!selectedDataset) return;
+        const nameToUse = saveName.trim() || selectedDataset;
         setSaving(true);
         setSaveSuccess(false);
         try {
-            const response = await fetch(
-                `${API_BASE}/api/datasets/save-csv?dataset_name=${encodeURIComponent(selectedDataset)}`,
-                { method: 'POST' }
-            );
+            const url = `${API_BASE}/api/datasets/save-csv?dataset_name=${encodeURIComponent(selectedDataset)}&save_name=${encodeURIComponent(nameToUse)}`;
+            const response = await fetch(url, { method: 'POST' });
             if (!response.ok) throw new Error('Save failed');
             setSaveSuccess(true);
+            setShowSaveInput(false);
             setTimeout(() => setSaveSuccess(false), 3000);
         } catch (err) {
             setError(err.message);
@@ -122,6 +153,30 @@ export default function DatasetExplorer() {
             if (!uploadName) setUploadName(file.name.replace(/\.csv$/i, ''));
         };
         reader.readAsText(file);
+    };
+
+    const handleDeleteDataset = async () => {
+        if (!selectedDataset) return;
+        setDeleting(true);
+        try {
+            const response = await fetch(`${API_BASE}/api/datasets/${encodeURIComponent(selectedDataset)}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.detail || 'Delete failed');
+            }
+            
+            // Success
+            setSelectedDataset(null);
+            setTableData({ columns: [], rows: [] });
+            setShowDeleteModal(false);
+            fetchDatasets();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setDeleting(false);
+        }
     };
 
     const downloadCsv = () => {
@@ -259,7 +314,10 @@ export default function DatasetExplorer() {
                                     onClick={() => selectDataset(d.source_dataset)}
                                 >
                                     <div>
-                                        <div className="dataset-name">{d.source_dataset}</div>
+                                        <div className="dataset-name">
+                                            {d.source_dataset}
+                                            <OwnershipBadge ownerUsername={d.owner_username} />
+                                        </div>
                                         <div className="dataset-meta">
                                             {d.row_count} rows
                                             {d.processed_at && (
@@ -357,14 +415,50 @@ export default function DatasetExplorer() {
                                         <button className="btn btn-secondary btn-sm" onClick={downloadCsv}>
                                             <Download size={12} /> Export CSV
                                         </button>
+                                        {showSaveInput ? (
+                                            <div className="flex-row" style={{ gap: 4 }}>
+                                                <input
+                                                    className="form-input"
+                                                    style={{ padding: '3px 8px', fontSize: 12, width: 160, height: 28 }}
+                                                    value={saveName}
+                                                    onChange={e => setSaveName(e.target.value)}
+                                                    placeholder="filename (no .csv)"
+                                                    autoFocus
+                                                    onKeyDown={e => { if (e.key === 'Enter') saveToMLDatasets(); if (e.key === 'Escape') setShowSaveInput(false); }}
+                                                />
+                                                <button
+                                                    className="btn btn-primary btn-sm"
+                                                    onClick={saveToMLDatasets}
+                                                    disabled={saving}
+                                                >
+                                                    {saving ? <span className="spinner" /> : <CheckCircle size={12} />}
+                                                    {saving ? '' : 'Save'}
+                                                </button>
+                                                <button
+                                                    className="btn btn-secondary btn-sm"
+                                                    onClick={() => setShowSaveInput(false)}
+                                                    disabled={saving}
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                className="btn btn-secondary btn-sm"
+                                                onClick={openSaveInput}
+                                                title="Save to /app/datasets/ for use in Processing & ML Training"
+                                            >
+                                                {saveSuccess ? <CheckCircle size={12} style={{ color: 'var(--color-success)' }} /> : <Database size={12} />}
+                                                {saveSuccess ? 'Saved!' : 'Save to ML Datasets'}
+                                            </button>
+                                        )}
                                         <button
                                             className="btn btn-secondary btn-sm"
-                                            onClick={saveToMLDatasets}
-                                            disabled={saving}
-                                            title="Save to /app/datasets/ for use in Processing & ML Training"
+                                            style={{ color: 'var(--color-error)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                                            onClick={() => setShowDeleteModal(true)}
+                                            title="Delete Dataset"
                                         >
-                                            {saving ? <span className="spinner" /> : saveSuccess ? <CheckCircle size={12} style={{ color: 'var(--color-success)' }} /> : <Database size={12} />}
-                                            {saveSuccess ? 'Saved!' : 'Save to ML Datasets'}
+                                            <Trash2 size={12} />
                                         </button>
                                     </div>
                                 </div>
@@ -478,6 +572,41 @@ export default function DatasetExplorer() {
                     )}
                 </div>
             </div>
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteModal && (
+                <div className="modal-overlay">
+                    <div className="modal-card">
+                        <div className="modal-header">
+                            <div className="modal-icon-container">
+                                <Trash2 size={24} />
+                            </div>
+                            <h2 className="modal-title">Delete Dataset</h2>
+                        </div>
+                        <div className="modal-body">
+                            Are you sure you want to permanently delete <strong>{selectedDataset}</strong>? 
+                            This action cannot be undone and will remove all associated database records and CSV files.
+                        </div>
+                        <div className="modal-footer">
+                            <button 
+                                className="btn btn-secondary" 
+                                onClick={() => setShowDeleteModal(false)}
+                                disabled={deleting}
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                className="btn" 
+                                style={{ backgroundColor: 'var(--color-error)', color: '#fff' }}
+                                onClick={handleDeleteDataset}
+                                disabled={deleting}
+                            >
+                                {deleting ? <><span className="spinner" /> Deleting...</> : 'Delete Dataset'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

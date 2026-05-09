@@ -54,6 +54,7 @@ const elements = {
   paginationStatus: document.getElementById('paginationStatus'),
   paginationSelectorDisplay: document.getElementById('paginationSelectorDisplay'),
   maxPagesDisplay: document.getElementById('maxPagesDisplay'),
+  maxPagesInput: document.getElementById('maxPagesInput'),
   btnPickPagination: document.getElementById('btnPickPagination'),
   btnClearPagination: document.getElementById('btnClearPagination'),
   linkStatus: document.getElementById('linkStatus'),
@@ -73,7 +74,18 @@ const elements = {
   btnBackToAdvanced: document.getElementById('btnBackToAdvanced'),
   
   // Global
-  statusMessage: document.getElementById('statusMessage')
+  statusMessage: document.getElementById('statusMessage'),
+
+  // Auth
+  authUnauthenticated: document.getElementById('auth-unauthenticated'),
+  authAuthenticated: document.getElementById('auth-authenticated'),
+  authUsername: document.getElementById('auth-username'),
+  authPassword: document.getElementById('auth-password'),
+  btnLogin: document.getElementById('btn-login'),
+  btnLogout: document.getElementById('btn-logout'),
+  displayUsername: document.getElementById('display-username'),
+  userInitials: document.getElementById('user-initials'),
+  wizardContainer: document.getElementById('wizard-container')
 };
 
 // ============================================================================
@@ -83,6 +95,9 @@ const elements = {
 document.addEventListener('DOMContentLoaded', async () => {
   // Load configuration from storage
   await configManager.loadFromStorage();
+
+  // Check Auth
+  await checkAuth();
   
   // Restore wizard step (or default to 'setup' if first time)
   const stored = await chrome.storage.local.get(['currentStep', 'lastSelection', 'selectionType']);
@@ -121,6 +136,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Setup event listeners
   setupEventListeners();
+  setupAuthEventListeners();
   
   // Navigate to saved step (do this AFTER setting up listeners)
   navigateToStep(startStep);
@@ -198,10 +214,21 @@ function setupEventListeners() {
   elements.paginationSelectorDisplay.addEventListener('input', (e) => {
     const newSelector = e.target.value;
     if (!newSelector) return;
-    const maxPagesInput = document.getElementById('maxPagesInput');
-    const maxPages = maxPagesInput ? (parseInt(maxPagesInput.value) || 5) : 5;
+    const maxPages = parseInt(elements.maxPagesInput.value) || 5;
     configManager.setPagination(newSelector, maxPages, 'selector');
     configManager.saveToStorage();
+    // Update summary text as well
+    elements.maxPagesDisplay.textContent = maxPages;
+  });
+
+  elements.maxPagesInput.addEventListener('input', (e) => {
+    const maxPages = parseInt(e.target.value) || 5;
+    const currentSelector = configManager.config.pagination?.selector;
+    if (currentSelector) {
+      configManager.setPagination(currentSelector, maxPages, 'selector');
+      configManager.saveToStorage();
+      elements.maxPagesDisplay.textContent = maxPages;
+    }
   });
 
   elements.linkSelectorDisplay.addEventListener('input', async (e) => {
@@ -274,7 +301,10 @@ async function startPicker(mode) {
   isPicking = true;
   const tab = await getCurrentTab();
   
-  const containerSelector = configManager.config.container_selector;
+  let containerSelector = configManager.config.container_selector;
+  if (mode === 'field' && configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
   
   chrome.tabs.sendMessage(tab.id, {
     action: 'togglePicker',
@@ -406,6 +436,7 @@ function displaySelectorOptions(data) {
   
   const selectors = [
     { name: 'Primary', key: 'primary', selector: data.selectors.primary },
+    { name: 'Label-Aware XPath', key: 'labelXPath', selector: data.selectors.labelXPath },
     { name: 'Simple Class', key: 'simpleClass', selector: data.selectors.simpleClass },
     { name: 'Tag + Class', key: 'tagClass', selector: data.selectors.tagClass },
     { name: 'CSS Path', key: 'cssPath', selector: data.selectors.cssPath },
@@ -597,7 +628,10 @@ async function testField(fieldName, selector) {
   showStatus(`Testing ${fieldName}...`, 'info');
   
   const tab = await getCurrentTab();
-  const containerSelector = configManager.config.container_selector;
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
   
   chrome.tabs.sendMessage(tab.id, {
     action: 'testSelector',
@@ -638,7 +672,10 @@ async function previewData() {
   showStatus('Generating preview...', 'info');
   
   const tab = await getCurrentTab();
-  const containerSelector = configManager.config.container_selector;
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
   
   chrome.tabs.sendMessage(tab.id, {
     action: 'previewData',
@@ -745,6 +782,7 @@ function updateAdvancedStatus() {
   if (configManager.config.pagination) {
     elements.paginationSelectorDisplay.value = configManager.config.pagination.selector;
     elements.maxPagesDisplay.textContent = configManager.config.pagination.max_pages;
+    elements.maxPagesInput.value = configManager.config.pagination.max_pages;
     elements.paginationStatus.classList.remove('hidden');
   } else {
     elements.paginationStatus.classList.add('hidden');
@@ -820,7 +858,10 @@ async function testAllSelectors() {
   showStatus(`Testing ${fieldKeys.length} fields...`, 'info');
   
   const tab = await getCurrentTab();
-  const containerSelector = configManager.config.container_selector;
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
   let passedCount = 0;
   let results = [];
   
@@ -958,10 +999,12 @@ async function startCrawl() {
     
     showStatus('Sending crawl request...', 'info');
     
+    const authHeader = await getAuthHeader();
     const response = await fetch('http://localhost:8000/api/crawl', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader
       },
       body: JSON.stringify(config)
     });
@@ -1023,12 +1066,99 @@ function showStatus(message, type = 'info') {
 }
 
 function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  if (!text) return '';
+  return text.toString()
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 async function getCurrentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
+}
+
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+
+function setupAuthEventListeners() {
+  elements.btnLogin.addEventListener('click', loginUser);
+  elements.btnLogout.addEventListener('click', logoutUser);
+}
+
+async function checkAuth() {
+  const { token, username } = await chrome.storage.local.get(['token', 'username']);
+  if (token && username) {
+    updateAuthUI(true, username);
+  } else {
+    updateAuthUI(false);
+  }
+}
+
+async function loginUser() {
+  const username = elements.authUsername.value.trim();
+  const password = elements.authPassword.value.trim();
+
+  if (!username || !password) {
+    showStatus('Please enter username and password', 'error');
+    return;
+  }
+
+  showStatus('Logging in...', 'info');
+  try {
+    const formData = new URLSearchParams();
+    formData.append('username', username);
+    formData.append('password', password);
+
+    const res = await fetch('http://localhost:8000/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData
+    });
+
+    if (!res.ok) {
+      throw new Error(`Login failed: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    await chrome.storage.local.set({
+      token: data.access_token,
+      username: username
+    });
+
+    updateAuthUI(true, username);
+    showStatus('Logged in successfully', 'success');
+  } catch (error) {
+    showStatus(`Login failed: ${error.message}`, 'error');
+  }
+}
+
+async function logoutUser() {
+  await chrome.storage.local.remove(['token', 'username']);
+  updateAuthUI(false);
+  showStatus('Logged out', 'info');
+}
+
+function updateAuthUI(isAuthenticated, username = '') {
+  if (isAuthenticated) {
+    elements.authUnauthenticated.classList.add('hidden');
+    elements.authAuthenticated.classList.remove('hidden');
+    elements.wizardContainer.classList.remove('hidden');
+    elements.displayUsername.textContent = username;
+    elements.userInitials.textContent = username.substring(0, 2).toUpperCase();
+  } else {
+    elements.authUnauthenticated.classList.remove('hidden');
+    elements.authAuthenticated.classList.add('hidden');
+    elements.wizardContainer.classList.add('hidden');
+    elements.authUsername.value = '';
+    elements.authPassword.value = '';
+  }
+}
+
+async function getAuthHeader() {
+  const { token } = await chrome.storage.local.get(['token']);
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
 }

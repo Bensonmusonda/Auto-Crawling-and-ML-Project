@@ -14,7 +14,7 @@ r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
 # IMPORTANT: name= must match exactly what backend/tasks.py sends via send_task().
 # backend/tasks.py run_workflow sends: 'tasks.run_crawl_task' on queue='celery'
 @app.task(bind=True, name="tasks.run_crawl_task")
-def run_crawl_task(self, config_input):
+def run_crawl_task(self, config_input, owner_id=None):
     from scrapy.crawler import CrawlerProcess
     from scrapy.settings import Settings
     from crawler.crawler.spiders.spiders import UniversalSpider
@@ -27,6 +27,7 @@ def run_crawl_task(self, config_input):
 
     job_id = self.request.id
     config_dict["job_id"] = job_id
+    config_dict["owner_id"] = owner_id
 
     print(f"[TASK START] {job_id}")
 

@@ -30,6 +30,7 @@ from predict_router import router as predict_router
 from documentation.router import router as docs_router
 from documentation.core import build_registry
 from auth_router import router as auth_router
+from db_utils import run_ownership_migrations
 
 
 import os
@@ -40,6 +41,8 @@ from fastapi.staticfiles import StaticFiles
 async def lifespan(fastapi_app: FastAPI):
     # Build documentation registry at startup
     build_registry()
+    # Add owner_id columns + create admin user + reassign legacy data
+    run_ownership_migrations()
     yield
 
 app = FastAPI(title="Data Acquisition & ML Platform", lifespan=lifespan)

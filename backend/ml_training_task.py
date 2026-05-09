@@ -41,19 +41,27 @@ def create_model_registry_table():
             conn.commit()
 
 
-def persist_model_metadata(job_id: str, result: dict, csv_path: str, target_column: str, model_type: str):
+def persist_model_metadata(
+    job_id: str,
+    result: dict,
+    csv_path: str,
+    target_column: str,
+    model_type: str,
+    owner_id: int = None,
+):
     """
     Save model training results to the model_registry table.
-    
+
     Args:
-        job_id: Celery task ID
-        result: Training result dictionary
-        csv_path: Path to the source CSV
+        job_id:        Celery task ID
+        result:        Training result dictionary
+        csv_path:      Path to the source CSV
         target_column: Target column name
-        model_type: Type of model trained
+        model_type:    Type of model trained
+        owner_id:      FK to users.id (None → will be reassigned to admin by migration)
     """
     create_model_registry_table()
-    
+
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -61,12 +69,12 @@ def persist_model_metadata(job_id: str, result: dict, csv_path: str, target_colu
                     job_id, model_type, task_type, model_path,
                     hyperparameters, metrics, feature_importance,
                     feature_names, n_samples_train, n_samples_test,
-                    n_features, source_csv, target_column
+                    n_features, source_csv, target_column, owner_id
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (job_id) DO UPDATE SET
-                    metrics = EXCLUDED.metrics,
+                    metrics           = EXCLUDED.metrics,
                     feature_importance = EXCLUDED.feature_importance
             """, (
                 job_id,
@@ -81,7 +89,8 @@ def persist_model_metadata(job_id: str, result: dict, csv_path: str, target_colu
                 result["n_samples_test"],
                 result["n_features"],
                 csv_path,
-                target_column
+                target_column,
+                owner_id,
             ))
             conn.commit()
 

@@ -1,7 +1,8 @@
 import os
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
-from typing import Dict
+from typing import Dict, Optional
+from db_utils import get_optional_user, get_admin_id
 import io
 import pandas as pd
 import psycopg
@@ -79,10 +80,25 @@ async def get_changed_rows_fast(processed_id: int) -> Dict:
 
 
 @router.get("/list")
-async def list_processed():
+async def list_processed(
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    if not user:
+        return []
+        
+    owner_id = user["id"]
+    is_admin = user.get("is_admin", False)
+    
     async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
         async with conn.cursor() as cur:
-            await cur.execute("""
+            if is_admin:
+                where_clause = ""
+                params = ()
+            else:
+                where_clause = "WHERE owner_id = %s"
+                params = (owner_id,)
+
+            await cur.execute(f"""
                 SELECT 
                     MIN(id) AS representative_id,          -- Use for changes/preview links
                     source_dataset,
@@ -91,24 +107,40 @@ async def list_processed():
                     MIN(processed_at) AS processed_at,
                     MAX(processed_at) AS last_updated
                 FROM processed_items
+                {where_clause}
                 GROUP BY 
                     source_dataset,
                     operations_applied,
                     DATE_TRUNC('minute', processed_at)     -- Group runs within the same minute
                 ORDER BY processed_at DESC
-            """)
+            """, params)
             results = await cur.fetchall()
             return results
 
 
 @router.get("/csv/{source_name}")
-async def get_processed_csv(source_name: str):
+async def get_processed_csv(
+    source_name: str,
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    if not user:
+        raise HTTPException(401, "Authentication required")
+
+    owner_id = user["id"]
+    is_admin = user.get("is_admin", False)
+
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT data FROM processed_items WHERE source_dataset = %s",
-                (source_name,)
-            )
+            if is_admin:
+                cur.execute(
+                    "SELECT data FROM processed_items WHERE source_dataset = %s",
+                    (source_name,)
+                )
+            else:
+                cur.execute(
+                    "SELECT data FROM processed_items WHERE source_dataset = %s AND owner_id = %s",
+                    (source_name, owner_id)
+                )
             rows = [r[0] for r in cur.fetchall()]
             if not rows:
                 raise HTTPException(404, "Not found")
