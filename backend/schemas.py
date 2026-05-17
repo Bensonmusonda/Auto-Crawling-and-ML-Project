@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Any
 class PaginationConfig(BaseModel):
     method: str = "selector"          # "selector" | "numeric" | "click" | "scroll"
     selector: Optional[str] = None    # CSS selector for next-page link or click target
+    template: Optional[str] = None    # URL template for numeric pagination
     max_pages: int = 5
     
     # New fields for dynamic pagination
@@ -21,6 +22,7 @@ class CrawlRequest(BaseModel):
     link_selector: Optional[str] = None
     container_selector: Optional[str] = None
     pagination: Optional[PaginationConfig] = None
+    requires_js: Optional[bool] = False
 
 class PipelineStep(BaseModel):
     step: str

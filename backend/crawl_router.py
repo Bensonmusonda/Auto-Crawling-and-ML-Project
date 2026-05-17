@@ -109,6 +109,27 @@ async def get_crawl_jobs(
             """, params)
             return await cur.fetchall()
 
+@router.post("/jobs/{job_id}/stop")
+async def stop_crawl_job(job_id: str, user: Optional[dict] = Depends(get_optional_user)):
+    from tasks import celery_app
+    celery_app.control.revoke(job_id, terminate=True, signal="SIGTERM")
+    
+    try:
+        r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
+        await r.publish("crawl_progress", json.dumps({
+            "job_id": job_id,
+            "status": "stopped",
+            "message": "Crawl stopped by user",
+            "pages_crawled": "—",
+            "items_scraped": "—",
+            "last_event": "STOPPED"
+        }))
+        await r.aclose()
+    except Exception:
+        pass
+        
+    return {"status": "stopped", "job_id": job_id}
+
 
 # ============================================================
 # SITE TIER MANAGEMENT

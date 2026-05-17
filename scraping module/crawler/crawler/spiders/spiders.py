@@ -106,8 +106,8 @@ class UniversalSpider(scrapy.Spider):
         return any(domain in url for domain in self.playwright_sites)
     
     def should_use_hybrid(self, url: str) -> bool:
-        """Check if URL should use ScraperAPI with wait_for_selector"""
-        return any(domain in url for domain in self.hybrid_sites)
+        """Check if URL should use ScraperAPI with wait_for_selector or requires_js is set"""
+        return self.config.get("requires_js", False) or any(domain in url for domain in self.hybrid_sites)
 
     # -------------------------
     # Start Requests
@@ -321,9 +321,12 @@ class UniversalSpider(scrapy.Spider):
 
         if method == "numeric":
             self.list_pages_count += 1
-
-            base_url = self.config["start_url"].split('?')[0]
-            next_url = f"{base_url}?page={self.list_pages_count}"
+            template = self.pagination.get("template")
+            if template:
+                next_url = template.replace("{page}", str(self.list_pages_count))
+            else:
+                base_url = self.config["start_url"].split('?')[0]
+                next_url = f"{base_url}?page={self.list_pages_count}"
 
         else:  # selector-based pagination
             selector = self.pagination.get("selector")
@@ -334,13 +337,19 @@ class UniversalSpider(scrapy.Spider):
                        response.css(f"{selector} a::attr(href)").get()
 
             if not next_url:
-                self.logger.info("No next page link found - end of pagination")
-                return
-
-            original_url = response.meta.get("original_url", response.url)
-            next_url = urljoin(original_url, next_url)
-
-            self.list_pages_count += 1
+                # Fallback to template if it's a JS-managed button without an href
+                template = self.pagination.get("template")
+                if template:
+                    self.logger.info("No href found in selector, falling back to template")
+                    self.list_pages_count += 1
+                    next_url = template.replace("{page}", str(self.list_pages_count))
+                else:
+                    self.logger.info("No next page link found - end of pagination")
+                    return
+            else:
+                original_url = response.meta.get("original_url", response.url)
+                next_url = urljoin(original_url, next_url)
+                self.list_pages_count += 1
 
         # Route pagination based on what was used for first request
         if using_playwright:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, RefreshCw, Plus, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Activity, RefreshCw, Plus, Trash2, Wifi, WifiOff, XCircle } from 'lucide-react';
 
 const OwnershipBadge = ({ ownerUsername }) => {
     if (!ownerUsername) return null;
@@ -100,6 +100,17 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
         saveSiteTier(activeTier, updated);
     };
 
+    const stopJob = async (jobId) => {
+        try {
+            await fetch(`${API_BASE}/api/crawl/jobs/${jobId}/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            console.error('Failed to stop job:', e);
+        }
+    };
+
     const liveJobsList = Object.values(liveJobs);
     const activeJobs = liveJobsList.filter(j => j.status === 'running');
 
@@ -130,13 +141,13 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                     marginBottom: 'var(--space-sm)', display: 'flex',
                     alignItems: 'center', gap: 8
                 }}>
-                    Active Jobs
+                    Currently Running Crawls
                     {activeJobs.length > 0 && (
                         <span className="badge badge-success">{activeJobs.length}</span>
                     )}
                 </div>
 
-                {liveJobsList.length === 0 ? (
+                {activeJobs.length === 0 ? (
                     <div className="card">
                         <div className="card-body empty-state">
                             <Activity />
@@ -152,19 +163,33 @@ export default function CrawlMonitor({ liveJobs = {}, wsConnected, events = [], 
                         style={{
                             maxHeight: 260,
                             overflowY: 'auto',
-                            paddingRight: 4  /* prevents scrollbar from overlapping cards */
+                            paddingRight: 4,
+                            alignItems: 'start',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))'
                         }}
                     >
-                        {liveJobsList.map(job => (
+                        {activeJobs.map(job => (
                             <div key={job.job_id} className="card">
                                 <div className="card-header">
                                     <span className="card-title">{job.dataset_name}</span>
-                                    <span className={`badge ${job.status === 'running' ? 'badge-success' :
-                                            job.status === 'failed' ? 'badge-error' :
-                                                'badge-neutral'
-                                        }`}>
-                                        {job.status}
-                                    </span>
+                                    <div className="flex-row">
+                                        <span className={`badge ${job.status === 'running' ? 'badge-success' :
+                                                job.status === 'failed' ? 'badge-error' :
+                                                    'badge-neutral'
+                                            }`}>
+                                            {job.status}
+                                        </span>
+                                        {job.status === 'running' && (
+                                            <button 
+                                                className="btn btn-secondary btn-sm"
+                                                style={{ padding: '2px 6px', borderColor: 'transparent' }}
+                                                onClick={() => stopJob(job.job_id)}
+                                                title="Stop Crawl"
+                                            >
+                                                <XCircle size={14} color="var(--color-error)" />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="card-body">
                                     <div className="grid-2" style={{ gap: 'var(--space-sm)' }}>

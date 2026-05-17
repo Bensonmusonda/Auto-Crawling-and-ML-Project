@@ -11,7 +11,8 @@ class ConfigManager {
             item_selectors: {},
             container_selector: null,
             link_selector: null,
-            pagination: null
+            pagination: null,
+            requires_js: false
         };
     }
 
@@ -77,12 +78,15 @@ class ConfigManager {
     }
 
     // Set pagination config
-    setPagination(selector, maxPages = 5, method = "selector") {
+    setPagination(selector, maxPages = 5, method = "selector", template = null) {
         this.config.pagination = {
             selector: selector,
             max_pages: maxPages,
             method: method // "selector" or "numeric"
         };
+        if (template) {
+            this.config.pagination.template = template;
+        }
     }
 
     // Clear pagination
@@ -100,6 +104,11 @@ class ConfigManager {
         this.config.start_url = url;
     }
 
+    // Set requires_js flag
+    setRequiresJs(requires) {
+        this.config.requires_js = !!requires;
+    }
+
     // Export to backend-compatible JSON
     exportConfig() {
         const validation = this.validate();
@@ -115,7 +124,8 @@ class ConfigManager {
             item_selectors: this.config.item_selectors,
             container_selector: this.config.container_selector,
             link_selector: this.config.link_selector,
-            pagination: this.config.pagination
+            pagination: this.config.pagination,
+            requires_js: this.config.requires_js || false
         };
     }
 
@@ -147,7 +157,8 @@ class ConfigManager {
             item_selectors: jsonData.item_selectors || {},
             container_selector: jsonData.container_selector || null,
             link_selector: jsonData.link_selector || null,
-            pagination: jsonData.pagination || null
+            pagination: jsonData.pagination || null,
+            requires_js: jsonData.requires_js || false
         };
     }
 
@@ -161,7 +172,8 @@ class ConfigManager {
             item_selectors: {},
             container_selector: null,
             link_selector: null,
-            pagination: null
+            pagination: null,
+            requires_js: false
         };
     }
 
@@ -235,6 +247,7 @@ class ConfigManager {
             mode,
             hasContainer,
             hasPagination,
+            requiresJs: !!this.config.requires_js,
             datasetName: this.config.dataset_name || "Unnamed",
             url: this.config.start_url
         };

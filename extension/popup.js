@@ -19,6 +19,7 @@ const elements = {
   
   // Setup step
   datasetName: document.getElementById('datasetName'),
+  requiresJs: document.getElementById('requiresJs'),
   summaryUrl: document.getElementById('summaryUrl'),
   crawlMode: document.getElementById('crawlMode'),
   fieldCount: document.getElementById('fieldCount'),
@@ -55,6 +56,7 @@ const elements = {
   paginationSelectorDisplay: document.getElementById('paginationSelectorDisplay'),
   maxPagesDisplay: document.getElementById('maxPagesDisplay'),
   maxPagesInput: document.getElementById('maxPagesInput'),
+  paginationTemplateInput: document.getElementById('paginationTemplateInput'),
   btnPickPagination: document.getElementById('btnPickPagination'),
   btnClearPagination: document.getElementById('btnClearPagination'),
   linkStatus: document.getElementById('linkStatus'),
@@ -194,6 +196,13 @@ function setupEventListeners() {
     configManager.saveToStorage();
   });
 
+  if (elements.requiresJs) {
+    elements.requiresJs.addEventListener('change', (e) => {
+      configManager.setRequiresJs(e.target.checked);
+      configManager.saveToStorage();
+    });
+  }
+
   // Manual edits for generic selectors
   elements.containerSelectorDisplay.addEventListener('input', async (e) => {
     const newSelector = e.target.value;
@@ -215,7 +224,8 @@ function setupEventListeners() {
     const newSelector = e.target.value;
     if (!newSelector) return;
     const maxPages = parseInt(elements.maxPagesInput.value) || 5;
-    configManager.setPagination(newSelector, maxPages, 'selector');
+    const currentTemplate = elements.paginationTemplateInput.value || null;
+    configManager.setPagination(newSelector, maxPages, 'selector', currentTemplate);
     configManager.saveToStorage();
     // Update summary text as well
     elements.maxPagesDisplay.textContent = maxPages;
@@ -223,11 +233,28 @@ function setupEventListeners() {
 
   elements.maxPagesInput.addEventListener('input', (e) => {
     const maxPages = parseInt(e.target.value) || 5;
-    const currentSelector = configManager.config.pagination?.selector;
-    if (currentSelector) {
-      configManager.setPagination(currentSelector, maxPages, 'selector');
+    const currentSelector = configManager.config.pagination?.selector || '';
+    const currentTemplate = configManager.config.pagination?.template || null;
+    if (currentSelector || currentTemplate) {
+      const method = currentSelector ? 'selector' : 'numeric';
+      configManager.setPagination(currentSelector, maxPages, method, currentTemplate);
       configManager.saveToStorage();
       elements.maxPagesDisplay.textContent = maxPages;
+    }
+  });
+
+  elements.paginationTemplateInput.addEventListener('input', (e) => {
+    const template = e.target.value;
+    const maxPages = parseInt(elements.maxPagesInput.value) || 5;
+    const currentSelector = configManager.config.pagination?.selector || '';
+    
+    // Set pagination even if selector is empty (fallback to numeric method)
+    const method = currentSelector ? 'selector' : 'numeric';
+    configManager.setPagination(currentSelector, maxPages, method, template || null);
+    configManager.saveToStorage();
+    
+    if (template || currentSelector) {
+      elements.paginationStatus.classList.remove('hidden');
     }
   });
 
@@ -739,12 +766,12 @@ function closePreview() {
 function handlePaginationSelected(data) {
   stopPicker();
 
-  // Bug 2 fix: prompt() is blocked in MV3 extension popups.
-  // Read max pages from the input field added to the Advanced step instead.
   const maxPagesInput = document.getElementById('maxPagesInput');
   const maxPages = maxPagesInput ? (parseInt(maxPagesInput.value) || 5) : 5;
+  const templateInput = document.getElementById('paginationTemplateInput');
+  const template = templateInput ? templateInput.value || null : null;
 
-  configManager.setPagination(data.selector, maxPages, 'selector');
+  configManager.setPagination(data.selector, maxPages, 'selector', template);
   configManager.saveToStorage();
 
   updateAdvancedStatus();
@@ -780,10 +807,15 @@ function clearLink() {
 function updateAdvancedStatus() {
   // Pagination
   if (configManager.config.pagination) {
-    elements.paginationSelectorDisplay.value = configManager.config.pagination.selector;
+    elements.paginationSelectorDisplay.value = configManager.config.pagination.selector || '';
     elements.maxPagesDisplay.textContent = configManager.config.pagination.max_pages;
     elements.maxPagesInput.value = configManager.config.pagination.max_pages;
-    elements.paginationStatus.classList.remove('hidden');
+    if (configManager.config.pagination.template) {
+      elements.paginationTemplateInput.value = configManager.config.pagination.template;
+    }
+    if (configManager.config.pagination.selector || configManager.config.pagination.template) {
+      elements.paginationStatus.classList.remove('hidden');
+    }
   } else {
     elements.paginationStatus.classList.add('hidden');
   }
@@ -826,6 +858,10 @@ function updateExportSummary() {
   
   html += '<div class="row"><span class="label">Crawl Type:</span><span class="value">' + 
     config.crawl_type + '</span></div>';
+  
+  if (config.requires_js) {
+    html += '<div class="row"><span class="label">JS Rendering:</span><span class="value">Yes</span></div>';
+  }
   
   html += '<div class="row"><span class="label">Fields:</span><span class="value">' + 
     fields.length + '</span></div>';
@@ -1053,6 +1089,10 @@ function updateSummary() {
   
   if (elements.datasetName.value === '') {
     elements.datasetName.value = summary.datasetName === 'Unnamed' ? '' : summary.datasetName;
+  }
+  
+  if (elements.requiresJs) {
+    elements.requiresJs.checked = summary.requiresJs || false;
   }
 }
 
