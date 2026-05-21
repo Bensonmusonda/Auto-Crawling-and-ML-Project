@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Wrench, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns
+    Wrench, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns, Sparkles, Loader
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
 
@@ -143,6 +143,16 @@ const AVAILABLE_STEPS = [
             { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
             { key: 'max_features', label: 'Max Features', type: 'text', default: '50' }
         ]
+    },
+    {
+        id: 'regex_extract',
+        label: 'Regex Extract (AI-Assisted)',
+        description: 'Extract a substring using a regex pattern (AI can generate the pattern for you)',
+        params: [
+            { key: 'column', label: 'Source Column', type: 'singlecolumn', default: '' },
+            { key: 'pattern', label: 'Regex Pattern', type: 'text', default: '' },
+            { key: 'new_col_name', label: 'New Column Name (optional)', type: 'text', default: '' }
+        ]
     }
 ];
 
@@ -246,6 +256,10 @@ export default function DataProcessing() {
     const [logs, setLogs] = useState([]);
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
+    const [isSuggesting, setIsSuggesting] = useState(false);
+    const [suggestError, setSuggestError] = useState(null);
+    const [regexIntents, setRegexIntents] = useState({});
+    const [generatingRegexFor, setGeneratingRegexFor] = useState(null);
     const wsRef = useRef(null);
 
     useEffect(() => {
@@ -269,6 +283,89 @@ export default function DataProcessing() {
 
     const addLog = (message, type = 'info') => {
         setLogs(prev => [...prev, { message, type, time: new Date().toLocaleTimeString() }]);
+    };
+
+    // --- AI: Auto-suggest pipeline steps ---
+    const handleAutoSuggest = async () => {
+        if (!datasetName) {
+            setSuggestError('Please select a dataset first.');
+            return;
+        }
+        setIsSuggesting(true);
+        setSuggestError(null);
+        addLog('Asking AI to analyse the dataset and suggest a pipeline…', 'info');
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${API_BASE}/api/ai/suggest-pipeline`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ dataset_name: datasetName })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'AI suggestion failed');
+            }
+            const data = await res.json();
+            const suggested = data.suggested_steps || [];
+            if (suggested.length === 0) {
+                addLog('AI returned no suggestions for this dataset.', 'info');
+                return;
+            }
+            // Map each AI-suggested step to our internal pipeline format
+            const newSteps = suggested.map(s => {
+                const def = AVAILABLE_STEPS.find(d => d.id === s.step);
+                return {
+                    step: s.step,
+                    label: def ? def.label : s.step,
+                    params: s.params || {},
+                    aiReasoning: s.reasoning || null,   // carry the reasoning for the UI
+                    aiGenerated: true
+                };
+            });
+            setPipeline(prev => [...prev, ...newSteps]);
+            addLog(`AI suggested ${newSteps.length} pipeline step(s). Review and run when ready.`, 'success');
+        } catch (e) {
+            setSuggestError(e.message);
+            addLog(`AI suggestion error: ${e.message}`, 'error');
+        } finally {
+            setIsSuggesting(false);
+        }
+    };
+
+    // --- AI: Generate a regex pattern for a specific pipeline step ---
+    const handleGenerateRegex = async (stepIndex) => {
+        const step = pipeline[stepIndex];
+        const column = step?.params?.column;
+        const intent = regexIntents[stepIndex] || '';
+        if (!column) { addLog('Select a column first before generating a regex.', 'error'); return; }
+        if (!intent.trim()) { addLog('Please describe what you want to extract.', 'error'); return; }
+        setGeneratingRegexFor(stepIndex);
+        addLog(`Generating regex for column "${column}"…`, 'info');
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(`${API_BASE}/api/ai/generate-regex`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ dataset_name: datasetName, column, intent })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Regex generation failed');
+            }
+            const data = await res.json();
+            updateStepParam(stepIndex, 'pattern', data.regex);
+            addLog(`Regex generated: ${data.regex}  — ${data.reasoning}`, 'success');
+        } catch (e) {
+            addLog(`Regex generation error: ${e.message}`, 'error');
+        } finally {
+            setGeneratingRegexFor(null);
+        }
     };
 
     const addStep = (stepDef) => {
@@ -447,8 +544,26 @@ export default function DataProcessing() {
                     <div className="card">
                         <div className="card-header">
                             <span className="card-title">Pipeline Steps</span>
-                            <span className="badge badge-neutral">{pipeline.length}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span className="badge badge-neutral">{pipeline.length}</span>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handleAutoSuggest}
+                                    disabled={isSuggesting || !datasetName}
+                                    title={!datasetName ? 'Select a dataset first' : 'Ask AI to suggest cleaning steps'}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px' }}
+                                >
+                                    {isSuggesting
+                                        ? <><Loader size={12} style={{ animation: 'spin 1s linear infinite' }} /> Thinking…</>
+                                        : <><Sparkles size={12} /> Auto-Suggest</>}
+                                </button>
+                            </div>
                         </div>
+                        {suggestError && (
+                            <div style={{ padding: '6px 12px', fontSize: 12, color: 'var(--color-error)', background: 'var(--bg-secondary)' }}>
+                                {suggestError}
+                            </div>
+                        )}
                         <div className="card-body">
                             {pipeline.length === 0 ? (
                                 <div className="empty-state" style={{ padding: 'var(--space-lg)' }}>
@@ -510,6 +625,48 @@ export default function DataProcessing() {
                                                         )}
                                                     </div>
                                                 ))}
+                                                {/* AI Reasoning hint */}
+                                                {step.aiGenerated && step.aiReasoning && (
+                                                    <div style={{
+                                                        marginTop: 6, padding: '5px 8px', borderRadius: 6,
+                                                        background: 'color-mix(in srgb, var(--color-success) 10%, transparent)',
+                                                        border: '1px solid color-mix(in srgb, var(--color-success) 25%, transparent)',
+                                                        fontSize: 11, color: 'var(--color-success)', display: 'flex', gap: 5
+                                                    }}>
+                                                        <Sparkles size={11} style={{ flexShrink: 0, marginTop: 1 }} />
+                                                        {step.aiReasoning}
+                                                    </div>
+                                                )}
+                                                {/* AI Regex Builder — only for regex_extract steps */}
+                                                {step.step === 'regex_extract' && (
+                                                    <div style={{
+                                                        marginTop: 8, padding: '8px 10px', borderRadius: 6,
+                                                        background: 'var(--bg-secondary)',
+                                                        border: '1px dashed var(--border-light)'
+                                                    }}>
+                                                        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                            <Sparkles size={11} />
+                                                            AI Regex Builder
+                                                        </div>
+                                                        <input
+                                                            className="form-input"
+                                                            placeholder="Describe what to extract (e.g. 'get the price number')…"
+                                                            value={regexIntents[idx] || ''}
+                                                            onChange={e => setRegexIntents(prev => ({ ...prev, [idx]: e.target.value }))}
+                                                            style={{ fontSize: 12, padding: '4px 8px', marginBottom: 6 }}
+                                                        />
+                                                        <button
+                                                            className="btn btn-secondary btn-sm"
+                                                            onClick={() => handleGenerateRegex(idx)}
+                                                            disabled={generatingRegexFor === idx || !step.params.column}
+                                                            style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                                                        >
+                                                            {generatingRegexFor === idx
+                                                                ? <><Loader size={11} style={{ animation: 'spin 1s linear infinite' }} /> Generating…</>
+                                                                : <><Sparkles size={11} /> Generate Regex</>}
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="pipeline-step-actions">
                                                 <button

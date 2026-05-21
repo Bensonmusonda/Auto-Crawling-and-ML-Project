@@ -229,6 +229,25 @@ def filter_rows(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     return df
 
 
+
+def regex_extract(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    """Extracts substrings matching a Regex pattern."""
+    col = kwargs.get('column')
+    pattern = kwargs.get('pattern')
+    new_col_name = kwargs.get('new_col_name')
+    
+    if col not in df.columns or not pattern:
+        return df
+        
+    try:
+        extracted = df[col].astype(str).str.extract(f'({pattern})', expand=False)
+        target_col = new_col_name if new_col_name else col
+        df[target_col] = extracted
+    except Exception as e:
+        pass
+    
+    return df
+
 # --- 4. ADVANCED NLP STRATEGIES ---
 
 def ner_extract(df: pd.DataFrame, **kwargs) -> pd.DataFrame:

@@ -4,7 +4,8 @@ from .strategies import (
     clean_text, sentiment_analysis, drop_columns, label_encode,
     remove_duplicates,
     rename_columns, filter_rows, clean_numeric_column,
-    ner_extract, extract_keywords, detect_language, text_vectorize
+    ner_extract, extract_keywords, detect_language, text_vectorize,
+    regex_extract
 )
 
 PROCESSOR_REGISTRY = {
@@ -30,6 +31,7 @@ PROCESSOR_REGISTRY = {
     "extract_keywords": extract_keywords,
     "detect_language": detect_language,
     "text_vectorize": text_vectorize,
+    "regex_extract": regex_extract,
 }
 
 def get_strategy(name: str):
