@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Wrench, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns, Sparkles, Loader
+    Wrench, Trash2, Play, AlertCircle, CheckCircle, ChevronDown, Columns, Sparkles, Loader, GripVertical
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
 
@@ -8,7 +8,7 @@ const API_BASE = 'http://localhost:8000';
 
 const AVAILABLE_STEPS = [
     {
-        id: 'drop_nulls',
+        id: 'drop_missing',
         label: 'Drop Null Rows',
         description: 'Remove rows with missing values',
         params: [
@@ -16,10 +16,11 @@ const AVAILABLE_STEPS = [
         ]
     },
     {
-        id: 'fill_missing',
+        id: 'impute',
         label: 'Fill Missing Values',
         description: 'Replace missing values with a strategy',
         params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' },
             { key: 'strategy', label: 'Strategy', type: 'select', options: ['mean', 'median', 'mode', 'constant'], default: 'mean' },
             { key: 'fill_value', label: 'Constant value (if strategy=constant)', type: 'text', default: '0' }
         ]
@@ -33,12 +34,12 @@ const AVAILABLE_STEPS = [
         ]
     },
     {
-        id: 'normalize',
-        label: 'Normalize',
+        id: 'scale_features',
+        label: 'Scale/Normalize',
         description: 'Scale numeric columns to a range',
         params: [
-            { key: 'method', label: 'Method', type: 'select', options: ['minmax', 'z_score', 'robust'], default: 'minmax' },
-            { key: 'columns', label: 'Columns (blank for all numeric)', type: 'multicolumn', default: '' }
+            { key: 'method', label: 'Method', type: 'select', options: ['minmax', 'standard', 'robust'], default: 'minmax' },
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
         ]
     },
     {
@@ -46,8 +47,24 @@ const AVAILABLE_STEPS = [
         label: 'Encode Categorical',
         description: 'Convert categorical columns to numeric',
         params: [
-            { key: 'method', label: 'Method', type: 'select', options: ['label', 'one_hot'], default: 'label' },
-            { key: 'columns', label: 'Columns', type: 'multicolumn', default: '' }
+            { key: 'columns', label: 'Columns', type: 'multicolumn', default: '' },
+            { key: 'method', label: 'Method', type: 'select', options: ['label', 'one_hot'], default: 'label' }
+        ]
+    },
+    {
+        id: 'label_encode',
+        label: 'Label Encode',
+        description: 'Convert categorical text to integers (e.g. A,B,C -> 0,1,2)',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
+        ]
+    },
+    {
+        id: 'one_hot_encode',
+        label: 'One-Hot Encode',
+        description: 'Convert categorical column to multiple binary columns',
+        params: [
+            { key: 'column', label: 'Column', type: 'singlecolumn', default: '' }
         ]
     },
     {
@@ -102,7 +119,7 @@ const AVAILABLE_STEPS = [
         ]
     },
     {
-        id: 'sentiment',
+        id: 'sentiment_analysis',
         label: 'Sentiment Analysis',
         description: 'Calculate sentiment polarity for a text column',
         params: [
@@ -156,12 +173,39 @@ const AVAILABLE_STEPS = [
     }
 ];
 
+// Map AI aliases to the primary step definitions found in AVAILABLE_STEPS
+const OP_ALIASES = {
+    'one_hot': 'one_hot_encode',
+    'label': 'label_encode',
+    'scale': 'scale_features',
+    'normalize': 'scale_features',
+    'fill_missing': 'impute',
+    'drop_nulls': 'drop_missing',
+    'sentiment': 'sentiment_analysis',
+    'one_hot_encode': 'one_hot_encode',
+    'label_encode': 'label_encode',
+    'scale_features': 'scale_features',
+    'impute': 'impute',
+    'drop_missing': 'drop_missing',
+    'encode_categorical': 'encode_categorical'
+};
+
+const getStepDef = (id) => {
+    const primaryId = OP_ALIASES[id] || id;
+    return AVAILABLE_STEPS.find(s => s.id === primaryId);
+};
+
 // Column multi-select dropdown component
 function ColumnPicker({ value, onChange, availableColumns, placeholder = 'Select columns…' }) {
     const [open, setOpen] = useState(false);
     const ref = useRef(null);
 
-    const selected = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+    let selected = [];
+    if (Array.isArray(value)) {
+        selected = value.filter(Boolean);
+    } else if (typeof value === 'string') {
+        selected = value.split(',').map(s => s.trim()).filter(Boolean);
+    }
 
     const toggle = (col) => {
         const next = selected.includes(col)
@@ -258,8 +302,12 @@ export default function DataProcessing() {
     const [error, setError] = useState(null);
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [suggestError, setSuggestError] = useState(null);
+    const [aiGoal, setAiGoal] = useState('');
+    const [aiSummary, setAiSummary] = useState(null);
+    const [suggestedModels, setSuggestedModels] = useState([]);
     const [regexIntents, setRegexIntents] = useState({});
     const [generatingRegexFor, setGeneratingRegexFor] = useState(null);
+    const [draggingIdx, setDraggingIdx] = useState(null);
     const wsRef = useRef(null);
 
     useEffect(() => {
@@ -293,7 +341,10 @@ export default function DataProcessing() {
         }
         setIsSuggesting(true);
         setSuggestError(null);
-        addLog('Asking AI to analyse the dataset and suggest a pipeline…', 'info');
+        setAiSummary(null);
+        setSuggestedModels([]);
+        
+        addLog('Asking AI for a strategic analysis and pipeline suggestion…', 'info');
         try {
             const token = localStorage.getItem('auth_token');
             const res = await fetch(`${API_BASE}/api/ai/suggest-pipeline`, {
@@ -302,37 +353,60 @@ export default function DataProcessing() {
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {})
                 },
-                body: JSON.stringify({ dataset_name: datasetName })
+                body: JSON.stringify({ 
+                    dataset_name: datasetName,
+                    dataset_path: csvPath || null,
+                    goal: aiGoal.trim() || null
+                })
             });
             if (!res.ok) {
                 const err = await res.json();
                 throw new Error(err.detail || 'AI suggestion failed');
             }
             const data = await res.json();
+            
+            setAiSummary(data.overall_summary);
+            setSuggestedModels(data.suggested_models || []);
+            
             const suggested = data.suggested_steps || [];
             if (suggested.length === 0) {
-                addLog('AI returned no suggestions for this dataset.', 'info');
+                addLog('AI returned no specific suggestions for this dataset.', 'info');
                 return;
             }
+            
             // Map each AI-suggested step to our internal pipeline format
             const newSteps = suggested.map(s => {
-                const def = AVAILABLE_STEPS.find(d => d.id === s.step);
+                const def = getStepDef(s.step);
                 return {
-                    step: s.step,
+                    step: def ? def.id : s.step, // Use primary ID
                     label: def ? def.label : s.step,
                     params: s.params || {},
-                    aiReasoning: s.reasoning || null,   // carry the reasoning for the UI
-                    aiGenerated: true
+                    aiReasoning: s.reasoning || null,
+                    aiGenerated: true,
+                    draft: true // Mark as draft until user interacts or runs
                 };
             });
-            setPipeline(prev => [...prev, ...newSteps]);
-            addLog(`AI suggested ${newSteps.length} pipeline step(s). Review and run when ready.`, 'success');
+            
+            setPipeline(prev => [...prev.filter(s => !s.draft), ...newSteps]);
+            addLog(`AI analysis complete. Suggested ${newSteps.length} steps and ${data.suggested_models?.length} model(s).`, 'success');
         } catch (e) {
             setSuggestError(e.message);
             addLog(`AI suggestion error: ${e.message}`, 'error');
         } finally {
             setIsSuggesting(false);
         }
+    };
+
+    const approveAllDrafts = () => {
+        setPipeline(prev => prev.map(s => ({ ...s, draft: false })));
+        addLog('All AI suggestions approved.', 'success');
+    };
+
+    const dismissAllDrafts = () => {
+        setPipeline(prev => prev.filter(s => !s.draft));
+        setAiSummary(null);
+        setSuggestedModels([]);
+        addLog('AI suggestions dismissed.', 'info');
     };
 
     // --- AI: Generate a regex pattern for a specific pipeline step ---
@@ -352,7 +426,12 @@ export default function DataProcessing() {
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {})
                 },
-                body: JSON.stringify({ dataset_name: datasetName, column, intent })
+                body: JSON.stringify({ 
+                    dataset_name: datasetName, 
+                    dataset_path: csvPath || null,
+                    column, 
+                    intent 
+                })
             });
             if (!res.ok) {
                 const err = await res.json();
@@ -432,6 +511,25 @@ export default function DataProcessing() {
         }
     };
 
+    const handleDragStart = (idx) => {
+        setDraggingIdx(idx);
+    };
+
+    const handleDragEnter = (e, targetIdx) => {
+        if (draggingIdx === null || draggingIdx === targetIdx) return;
+        
+        const newPipeline = [...pipeline];
+        const draggedItem = newPipeline.splice(draggingIdx, 1)[0];
+        newPipeline.splice(targetIdx, 0, draggedItem);
+        
+        setDraggingIdx(targetIdx);
+        setPipeline(newPipeline);
+    };
+
+    const handleDragEnd = () => {
+        setDraggingIdx(null);
+    };
+
     const handleRun = async () => {
         if (!datasetName.trim() || pipeline.length === 0) {
             setError('Select a dataset and add at least one processing step');
@@ -490,9 +588,7 @@ export default function DataProcessing() {
             addLog(`Error: ${err.message}`, 'error');
         }
     };
-
-    const getStepDef = (stepId) => AVAILABLE_STEPS.find(s => s.id === stepId);
-
+ 
     return (
         <div className="page-container">
             <div className="page-header">
@@ -542,25 +638,64 @@ export default function DataProcessing() {
 
                     {/* Pipeline Builder */}
                     <div className="card">
-                        <div className="card-header">
-                            <span className="card-title">Pipeline Steps</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="card-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span className="card-title">Pipeline Steps</span>
                                 <span className="badge badge-neutral">{pipeline.length}</span>
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <input 
+                                    className="form-input"
+                                    placeholder="Enter ML goal (e.g. 'classify spam', 'predict prices') for better suggestions…"
+                                    value={aiGoal}
+                                    onChange={e => setAiGoal(e.target.value)}
+                                    style={{ fontSize: 12, padding: '6px 10px' }}
+                                />
                                 <button
-                                    className="btn btn-secondary btn-sm"
+                                    className="btn btn-secondary"
                                     onClick={handleAutoSuggest}
                                     disabled={isSuggesting || !datasetName}
-                                    title={!datasetName ? 'Select a dataset first' : 'Ask AI to suggest cleaning steps'}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px' }}
+                                    style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '6px 12px' }}
                                 >
                                     {isSuggesting
-                                        ? <><Loader size={12} style={{ animation: 'spin 1s linear infinite' }} /> Thinking…</>
-                                        : <><Sparkles size={12} /> Auto-Suggest</>}
+                                        ? <><Loader size={14} style={{ animation: 'spin 1s linear infinite' }} /> Thinking…</>
+                                        : <><Sparkles size={14} /> Auto-Suggest</>}
                                 </button>
                             </div>
                         </div>
+
+                        {aiSummary && (
+                            <div style={{ 
+                                padding: '12px 15px', 
+                                background: 'var(--bg-secondary)', 
+                                borderBottom: '1px solid var(--border-light)',
+                                position: 'relative'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, color: 'var(--color-primary)', fontWeight: 600, fontSize: 12 }}>
+                                    <Sparkles size={14} />
+                                    AI Strategy Summary
+                                </div>
+                                <p style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                                    {aiSummary}
+                                </p>
+                                {suggestedModels.length > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Recommended Models:</span>
+                                        {suggestedModels.map(m => (
+                                            <span key={m} className="badge badge-primary" style={{ fontSize: 10 }}>{m}</span>
+                                        ))}
+                                    </div>
+                                )}
+                                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                                    <button className="btn btn-primary btn-sm" onClick={approveAllDrafts} style={{ fontSize: 11 }}>Approve All</button>
+                                    <button className="btn btn-secondary btn-sm" onClick={dismissAllDrafts} style={{ fontSize: 11 }}>Dismiss Suggestions</button>
+                                </div>
+                            </div>
+                        )}
+
                         {suggestError && (
-                            <div style={{ padding: '6px 12px', fontSize: 12, color: 'var(--color-error)', background: 'var(--bg-secondary)' }}>
+                            <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--color-error)', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-light)' }}>
                                 {suggestError}
                             </div>
                         )}
@@ -574,12 +709,38 @@ export default function DataProcessing() {
                             ) : (
                                 pipeline.map((step, idx) => {
                                     const def = getStepDef(step.step);
+                                    const isDragging = draggingIdx === idx;
                                     return (
-                                        <div key={idx} className="pipeline-step">
+                                        <div 
+                                            key={idx} 
+                                            draggable
+                                            onDragStart={() => handleDragStart(idx)}
+                                            onDragEnter={(e) => handleDragEnter(e, idx)}
+                                            onDragEnd={handleDragEnd}
+                                            onDragOver={(e) => e.preventDefault()}
+                                            className={`pipeline-step ${step.draft ? 'draft' : ''} ${isDragging ? 'dragging' : ''}`} 
+                                            style={{
+                                                ...(step.draft ? { borderLeft: '3px solid var(--color-primary)', background: 'rgba(59, 130, 246, 0.03)' } : {}),
+                                                ...(isDragging ? { 
+                                                    opacity: 0.3, 
+                                                    transform: 'scale(0.98)', 
+                                                    background: 'var(--bg-secondary)',
+                                                    border: '1px dashed var(--color-primary)'
+                                                } : {}),
+                                                transition: 'transform 0.2s ease, opacity 0.2s ease',
+                                                cursor: 'grab'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', marginRight: 10, color: 'var(--text-muted)' }}>
+                                                <GripVertical size={16} />
+                                            </div>
                                             <div className="pipeline-step-number">{idx + 1}</div>
                                             <div className="pipeline-step-content">
-                                                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-                                                    {step.label}
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                                                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                                        {step.label}
+                                                        {step.draft && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>[Draft]</span>}
+                                                    </div>
                                                 </div>
                                                 {def && def.params.map(p => (
                                                     <div key={p.key} className="form-group" style={{ marginBottom: 8 }}>

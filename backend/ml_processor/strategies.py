@@ -137,39 +137,46 @@ def clean_text(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     return df
 
 def clean_numeric_column(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
-    """Removes HTML tags and specific characters, then converts to numeric."""
     col = kwargs.get('column')
     chars_to_strip = kwargs.get('strip_chars', '')
     
+    # Accept boolean flags from AI but don't rely on them —
+    # the real cleaning is regex-based below
+    strip_dollar = kwargs.get('strip_dollar', False)
+    remove_commas = kwargs.get('remove_commas', False)
+
     if col not in df.columns:
         return df
-        
-    # 1. Strip HTML tags
+
     s = df[col].astype(str).str.replace(r'<[^>]+>', '', regex=True)
-    
-    # 2. Strip specific characters (like $, commas, or words)
+
+    # Strip ANY currency symbol or non-numeric prefix/suffix regardless of
+    # what the AI sent — covers $, £, €, ¥, ₹, kr, etc.
+    s = s.str.replace(r'[^\d,.\-]', '', regex=True)
+
+    # Handle explicit strip_chars on top if provided
     if chars_to_strip:
-        # Split by comma or space and filter empties
         chars = [c.strip() for c in re.split(r'[,|]', chars_to_strip) if c.strip()]
         for c in chars:
-            # Escape regex special characters in the string to remove
             s = s.str.replace(re.escape(c), '', regex=True)
-            
-    # Remove all whitespace
+
     s = s.str.replace(r'\s+', '', regex=True)
-    
-    # 3. Handle commas used as decimals in European formats vs thousands separators
-    # If it contains both dot and comma (e.g. 1,000.50), remove comma.
-    # If it contains only comma (e.g. 462,90), replace with dot.
+
     def parse_number_string(x):
-        if x in ('None', 'nan', ''): return np.nan
-        if ',' in x and '.' in x: return x.replace(',', '')
-        if ',' in x and '.' not in x: return x.replace(',', '.')
+        if x in ('None', 'nan', '', 'nan'): return np.nan
+        # Both separators present: comma is always the thousands separator (e.g. 1,234.56)
+        if ',' in x and '.' in x:
+            return x.replace(',', '')
+        if ',' in x and '.' not in x:
+            # Thousands separator: comma followed by exactly 3 digits, possibly repeating
+            # e.g. 215,000 or 1,234,567 — NOT a decimal comma like 1,5
+            if re.match(r'^\d{1,3}(,\d{3})+$', x):
+                return x.replace(',', '')
+            # European decimal comma (e.g. 1,5 or 3,14)
+            return x.replace(',', '.')
         return x
-        
+
     s = s.apply(parse_number_string)
-    
-    # 4. Convert to float
     df[col] = pd.to_numeric(s, errors='coerce')
     return df
 

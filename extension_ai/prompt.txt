@@ -1,0 +1,16 @@
+--- USER QUERY & BUG REPORT ---
+I am building a Chrome Extension web scraper with a multi-step setup wizard: Container Selection -> Field Selection -> Pagination -> Links. 
+
+The extension uses a Content Script (`content.js`) to intercept user clicks, send those DOM selection payloads to the Popup Script (`popup.js`), and then option panels are displayed where users can also optimize selectors using a FastAPI/Pydantic AI backend (`/api/ai/suggest-selector`).
+
+### THE CURRENT ISSUES:
+1. CONTAINER MODE WORKS: Selecting a container element works perfectly, updates the UI, and the DeepSeek AI suggestion payload triggers and renders seamlessly.
+2. FIELD MODE IS BROKEN IN TWO PLACES:
+   - Issue A (Interception Lock-up): When entering 'field' picking mode, if I click an element *outside* the container, the validation warning correctly fires. However, when I click an element *inside* the selected container, absolutely nothing happens—the click event seems silently swallowed or throws an unhandled exception before communicating with `popup.js`.
+   - Issue B (UI Rendering/Key Mismatches): Even when a field payload is manually simulated/passed, the field details panel (`elements.fieldSelectionPanel`) fails to show up in the extension window. There are structural naming conflicts between `data.candidates`, `data.selectors`, and how `handleFieldSelected` invokes `auditSelectorsWithAi` / `injectAiSelectors`.
+
+### YOUR TASK:
+Review the complete architecture provided above (Content Script, Popup JS, Popup HTML, and Backend Schema). 
+1. Identify exactly where the click interception is failing or getting swallowed inside `content.js` when clicking inside a container element.
+2. Fix the state machine and data mapping in `popup.js` (`handleFieldSelected` and `auditSelectorsWithAi`) so that fields seamlessly render, execute, and display AI optimizations exactly like containers do.
+3. Provide the fully corrected, production-ready code blocks for `content.js` and `popup.js`. Ensure all event listener capture phases, `e.preventDefault()`, data payload keys (`candidates`), and UI visibility triggers match up flawlessly.

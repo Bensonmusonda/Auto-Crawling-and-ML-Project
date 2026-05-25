@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Page - Books to Scrape Structure</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      list-style: none;
+      padding: 0;
+    }
+    .col-xs-6 {
+      flex: 0 0 calc(50% - 10px);
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .product_pod h3 {
+      margin: 0 0 10px 0;
+      color: #333;
+    }
+    .product_pod a {
+      text-decoration: none;
+      color: #0066cc;
+    }
+    .price {
+      color: #009900;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Test Page - Container Selection</h1>
+  <p>This mimics the Books to Scrape structure. Try selecting a container!</p>
+  
+  <ol class="row">
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book1">A Light in the Attic</a></h3>
+        <p class="price">£51.77</p>
+      </article>
+    </li>
+    
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book2">Tipping the Velvet</a></h3>
+        <p class="price">£53.74</p>
+      </article>
+    </li>
+    
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book3">Soumission</a></h3>
+        <p class="price">£50.10</p>
+      </article>
+    </li>
+    
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book4">Sharp Objects</a></h3>
+        <p class="price">£47.82</p>
+      </article>
+    </li>
+    
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book5">Sapiens</a></h3>
+        <p class="price">£54.23</p>
+      </article>
+    </li>
+    
+    <li class="col-xs-6 col-sm-4 col-md-3 col-lg-3">
+      <article class="product_pod">
+        <h3><a href="/book6">The Requiem Red</a></h3>
+        <p class="price">£22.65</p>
+      </article>
+    </li>
+  </ol>
+
+  <script>
+    // Debug helper
+    console.log('Test page loaded');
+    console.log('Container elements:', document.querySelectorAll('li.col-xs-6').length);
+    console.log('Simple li.col-xs-6 selector finds:', document.querySelectorAll('li.col-xs-6').length, 'items');
+  </script>
+</body>
+</html>

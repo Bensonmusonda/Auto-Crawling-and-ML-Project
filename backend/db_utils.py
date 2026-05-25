@@ -167,23 +167,25 @@ def run_ownership_migrations():
 _ADMIN_ID_CACHE = None
 
 async def get_admin_id() -> int:
-    """Returns the actual ID of the admin user from the DB."""
     global _ADMIN_ID_CACHE
     if _ADMIN_ID_CACHE is not None:
         return _ADMIN_ID_CACHE
-        
     try:
-        async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            DATABASE_URL, row_factory=dict_row
+        ) as conn:
             async with conn.cursor() as cur:
-                await cur.execute("SELECT id FROM users WHERE is_admin = TRUE ORDER BY id ASC LIMIT 1")
+                await cur.execute(
+                    "SELECT id FROM users WHERE is_admin = TRUE ORDER BY id ASC LIMIT 1"
+                )
                 row = await cur.fetchone()
                 if row:
                     _ADMIN_ID_CACHE = row["id"]
                     return _ADMIN_ID_CACHE
     except Exception:
         pass
-    
-    return 1  # Fallback to 1 if DB not ready or error
+    # DO NOT fall back to 1 — if the DB isn't ready, raise so the caller knows
+    raise RuntimeError("Could not resolve admin ID — database may not be ready")
 
 
 # ── FastAPI dependency ────────────────────────────────────────────────────────

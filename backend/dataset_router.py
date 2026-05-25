@@ -20,33 +20,30 @@ from db_utils import (
 router = APIRouter(tags=["datasets"])
 
 # Helper function to fetch raw dataset records for AI endpoints
+# Fix fetch_dataset — don't hardcode admin as id=1
 async def fetch_dataset(dataset_name: str, owner_id: Optional[int] = None) -> list:
-    """Retrieve raw dataset rows from the database.
-
-    Args:
-        dataset_name: Name of the dataset to fetch.
-        owner_id: Optional user ID for permission filtering. If None, no owner filter is applied.
-
-    Returns:
-        A list of records (each record is a JSON-serializable dict).
-    """
-    # Determine if the user is admin based on owner_id (admin ID is 1 by convention)
-    is_admin = (owner_id == 1)
     query = "SELECT data FROM scraped_items WHERE dataset_name = %s"
     params = [dataset_name]
-    if not is_admin:
-        query += " AND owner_id = %s"
+    if owner_id is not None:
+        # Fetch user's own rows OR admin's shared rows — no hardcoded ID
+        query += """
+            AND (owner_id = %s 
+                 OR owner_id = (
+                     SELECT id FROM users WHERE is_admin = TRUE ORDER BY id LIMIT 1
+                 ))
+        """
         params.append(owner_id)
     try:
-        async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            DATABASE_URL, row_factory=dict_row
+        ) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, tuple(params))
                 records = await cur.fetchall()
-        # Extract the JSON payload from each row
         return [row["data"] for row in records]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch dataset: {str(e)}")
-DATABASE_URL = DB_URL_FROM_UTILS
+# DATABASE_URL = DB_URL_FROM_UTILS
 
 DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_PORT = os.getenv("DB_PORT", "5432")
@@ -215,6 +212,7 @@ async def process_dataset(
     request: PipelineConfig,
     user: Optional[dict] = Depends(get_optional_user),
 ):
+    print(f"DEBUG /api/process user={user!r}", flush=True)
     from tasks import celery_app
     owner_id = user["id"] if user else None
     try:
@@ -224,7 +222,6 @@ async def process_dataset(
             kwargs={'owner_id': owner_id},
             queue='ml_tasks'
         )
-        
         return {
             "message": "Processing started",
             "job_id": task.id,

@@ -59,7 +59,17 @@ class ModelTrainer:
         # Separate features and target
         X = df.drop(columns=[self.target_column])
         y = df[self.target_column]
-        
+
+        # Drop rows where the target is NaN — sklearn raises ValueError otherwise.
+        # This handles cases where clean_numeric_column couldn't parse a value
+        # (e.g. malformed strings) and left NaN in the target column.
+        nan_mask = y.notna()
+        dropped = (~nan_mask).sum()
+        if dropped > 0:
+            print(f"[ModelTrainer] Dropping {dropped} rows with NaN in target '{self.target_column}'")
+        X = X[nan_mask].reset_index(drop=True)
+        y = y[nan_mask].reset_index(drop=True)
+
         # Store feature names
         self.feature_names = list(X.columns)
         
@@ -131,7 +141,9 @@ class ModelTrainer:
             "n_samples_train": len(X_train),
             "n_samples_test": len(X_test),
             "n_features": len(self.feature_names),
-            "task_type": self.strategy.task_type
+            "task_type": self.strategy.task_type,
+            "csv_path": self.csv_path,
+            "target_column": self.target_column
         }
         
         return result

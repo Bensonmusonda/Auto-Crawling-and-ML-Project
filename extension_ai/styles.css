@@ -1,0 +1,70 @@
+/* Highlighter Overlay - Hover state */
+.ac-selector-highlight {
+  outline: 3px solid #2a2a2a !important;
+  outline-offset: -3px !important;
+  background-color: rgba(42, 42, 42, 0.1) !important;
+  cursor: crosshair !important;
+  z-index: 2147483647 !important;
+}
+
+/* Selected Element Confirmation */
+.ac-selector-selected {
+  outline: 3px solid #10b981 !important;
+  outline-offset: -3px !important;
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  animation: ac-pulse 0.5s ease-in-out;
+  z-index: 2147483647 !important;
+}
+
+@keyframes ac-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* Pattern Detection - Highlight similar elements */
+.ac-pattern-highlight {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: -2px !important;
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  z-index: 2147483646 !important;
+  animation: ac-pattern-fade 2s ease-in-out;
+}
+
+@keyframes ac-pattern-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+/* Container Highlight */
+.ac-container-highlight {
+  outline: 3px solid #f59e0b !important;
+  outline-offset: -3px !important;
+  background-color: rgba(245, 158, 11, 0.08) !important;
+  z-index: 2147483646 !important;
+  animation: ac-container-pulse 2s ease-in-out;
+}
+
+@keyframes ac-container-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* Link Element Detection */
+.ac-link-highlight {
+  outline: 2px solid #8b5cf6 !important;
+  outline-offset: -2px !important;
+  background-color: rgba(139, 92, 246, 0.1) !important;
+  z-index: 2147483646 !important;
+}

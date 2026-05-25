@@ -10,7 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from celery import Celery
 import glob
-from datetime import datetime
+# import os (handled later)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,14 +48,17 @@ async def lifespan(fastapi_app: FastAPI):
 
 app = FastAPI(title="Data Acquisition & ML Platform", lifespan=lifespan)
 
+FRONTEND_PORT = os.getenv("FRONTEND_PORT", "4000")
+
 origins = [
+    f"http://localhost:{FRONTEND_PORT}",
     "http://localhost:5500",
     "https://www.yourapp.com",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,0 +1,1535 @@
+// Initialize Config Manager
+const configManager = new ConfigManager();
+let currentSelection = null;
+let isPicking = false;
+let currentStep = 'setup';
+
+// DOM Elements
+const steps = {
+  setup: document.getElementById('step-setup'),
+  container: document.getElementById('step-container'),
+  fields: document.getElementById('step-fields'),
+  advanced: document.getElementById('step-advanced'),
+  export: document.getElementById('step-export')
+};
+
+const elements = {
+  // Header
+  currentUrl: document.getElementById('currentUrl'),
+
+  // Setup step
+  datasetName: document.getElementById('datasetName'),
+  requiresJs: document.getElementById('requiresJs'),
+  summaryUrl: document.getElementById('summaryUrl'),
+  crawlMode: document.getElementById('crawlMode'),
+  fieldCount: document.getElementById('fieldCount'),
+  btnNextToContainer: document.getElementById('btnNextToContainer'),
+
+  // Container step
+  containerStatus: document.getElementById('containerStatus'),
+  containerSelectorDisplay: document.getElementById('containerSelectorDisplay'),
+  containerCountDisplay: document.getElementById('containerCountDisplay'),
+  btnPickContainer: document.getElementById('btnPickContainer'),
+  btnClearContainer: document.getElementById('btnClearContainer'),
+  btnSkipContainer: document.getElementById('btnSkipContainer'),
+  btnNextToFields: document.getElementById('btnNextToFields'),
+
+  // Fields step
+  fieldSelectionPanel: document.getElementById('fieldSelectionPanel'),
+  fieldNameInput: document.getElementById('fieldNameInput'),
+  textPreview: document.getElementById('textPreview'),
+  selectorOptions: document.getElementById('selectorOptions'),
+  btnAddField: document.getElementById('btnAddField'),
+  btnCancelField: document.getElementById('btnCancelField'),
+  fieldList: document.getElementById('fieldList'),
+  emptyFieldsState: document.getElementById('emptyFieldsState'),
+  btnPickField: document.getElementById('btnPickField'),
+  btnBackToContainer: document.getElementById('btnBackToContainer'),
+  btnPreviewData: document.getElementById('btnPreviewData'),
+  btnNextToAdvanced: document.getElementById('btnNextToAdvanced'),
+  dataPreviewSection: document.getElementById('dataPreviewSection'),
+  dataPreviewContent: document.getElementById('dataPreviewContent'),
+  btnClosePreview: document.getElementById('btnClosePreview'),
+
+  // Advanced step
+  paginationStatus: document.getElementById('paginationStatus'),
+  paginationSelectorDisplay: document.getElementById('paginationSelectorDisplay'),
+  maxPagesDisplay: document.getElementById('maxPagesDisplay'),
+  maxPagesInput: document.getElementById('maxPagesInput'),
+  paginationTemplateInput: document.getElementById('paginationTemplateInput'),
+  btnPickPagination: document.getElementById('btnPickPagination'),
+  btnClearPagination: document.getElementById('btnClearPagination'),
+  linkStatus: document.getElementById('linkStatus'),
+  linkSelectorDisplay: document.getElementById('linkSelectorDisplay'),
+  linkCountDisplay: document.getElementById('linkCountDisplay'),
+  btnPickLink: document.getElementById('btnPickLink'),
+  btnClearLink: document.getElementById('btnClearLink'),
+  btnBackToFields: document.getElementById('btnBackToFields'),
+  btnNextToExport: document.getElementById('btnNextToExport'),
+
+  // Export step
+  exportSummary: document.getElementById('exportSummary'),
+  btnTestAll: document.getElementById('btnTestAll'),
+  btnExport: document.getElementById('btnExport'),
+  btnStartCrawl: document.getElementById('btnStartCrawl'),
+  btnClearAll: document.getElementById('btnClearAll'),
+  btnBackToAdvanced: document.getElementById('btnBackToAdvanced'),
+
+  // Global
+  statusMessage: document.getElementById('statusMessage'),
+
+  // Auth
+  authUnauthenticated: document.getElementById('auth-unauthenticated'),
+  authAuthenticated: document.getElementById('auth-authenticated'),
+  authUsername: document.getElementById('auth-username'),
+  authPassword: document.getElementById('auth-password'),
+  btnLogin: document.getElementById('btn-login'),
+  btnLogout: document.getElementById('btn-logout'),
+  displayUsername: document.getElementById('display-username'),
+  userInitials: document.getElementById('user-initials'),
+  wizardContainer: document.getElementById('wizard-container')
+};
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Load configuration from storage
+  await configManager.loadFromStorage();
+
+  // Check Auth
+  await checkAuth();
+
+  // Restore wizard step (or default to 'setup' if first time)
+  const stored = await chrome.storage.local.get(['currentStep', 'lastSelection', 'selectionType']);
+  const startStep = stored.currentStep || 'setup';
+
+  // Process any pending selection from when popup was closed.
+  // Bugs 1 & 4 fix: all four selection types are now replayed, not just
+  // container and field. paginationSelected and linkSelected were previously
+  // saved by background.js but silently discarded here.
+  if (stored.lastSelection && stored.selectionType) {
+    if (stored.selectionType === 'containerSelected') {
+      handleContainerSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'fieldSelected') {
+      handleFieldSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'paginationSelected') {
+      handlePaginationSelected(stored.lastSelection);
+    } else if (stored.selectionType === 'linkSelected') {
+      handleLinkSelected(stored.lastSelection);
+    }
+    // Clear so we don't process it again on next open
+    chrome.storage.local.remove(['lastSelection', 'selectionType']);
+  }
+
+  // Get current tab URL
+  const tab = await getCurrentTab();
+  if (tab) {
+    configManager.setStartUrl(tab.url);
+    elements.currentUrl.textContent = new URL(tab.url).hostname;
+    elements.summaryUrl.textContent = new URL(tab.url).hostname;
+  }
+
+  // Update UI
+  updateSummary();
+  renderFieldList();
+  updateAdvancedStatus();
+
+  // Setup event listeners
+  setupEventListeners();
+  setupAuthEventListeners();
+
+  // Navigate to saved step (do this AFTER setting up listeners)
+  navigateToStep(startStep);
+});
+
+// ============================================================================
+// EVENT LISTENERS
+// ============================================================================
+
+function setupEventListeners() {
+  // Wizard navigation
+  document.querySelectorAll('.wizard-step').forEach(step => {
+    step.addEventListener('click', () => {
+      const stepName = step.dataset.step;
+      navigateToStep(stepName);
+    });
+  });
+
+  // Setup step
+  elements.btnNextToContainer.addEventListener('click', () => navigateToStep('container'));
+
+  // Container step
+  elements.btnPickContainer.addEventListener('click', () => startPicker('container'));
+  elements.btnClearContainer.addEventListener('click', clearContainer);
+  elements.btnSkipContainer.addEventListener('click', () => navigateToStep('fields'));
+  elements.btnNextToFields.addEventListener('click', () => navigateToStep('fields'));
+
+  // Fields step
+  elements.btnPickField.addEventListener('click', () => startPicker('field'));
+  elements.btnAddField.addEventListener('click', addField);
+  elements.btnCancelField.addEventListener('click', cancelFieldSelection);
+  elements.btnBackToContainer.addEventListener('click', () => navigateToStep('container'));
+  elements.btnPreviewData.addEventListener('click', previewData);
+  elements.btnClosePreview.addEventListener('click', closePreview);
+  elements.btnNextToAdvanced.addEventListener('click', () => navigateToStep('advanced'));
+
+  // Advanced step
+  elements.btnPickPagination.addEventListener('click', () => startPicker('pagination'));
+  elements.btnClearPagination.addEventListener('click', clearPagination);
+  elements.btnPickLink.addEventListener('click', () => startPicker('link'));
+  elements.btnClearLink.addEventListener('click', clearLink);
+  elements.btnBackToFields.addEventListener('click', () => navigateToStep('fields'));
+  elements.btnNextToExport.addEventListener('click', () => navigateToStep('export'));
+
+  // Export step
+  elements.btnTestAll.addEventListener('click', testAllSelectors);
+  elements.btnExport.addEventListener('click', exportConfiguration);
+  elements.btnStartCrawl.addEventListener('click', startCrawl);
+  elements.btnClearAll.addEventListener('click', clearAll);
+  elements.btnBackToAdvanced.addEventListener('click', () => navigateToStep('advanced'));
+
+  // Dataset name
+  elements.datasetName.addEventListener('change', (e) => {
+    configManager.setDatasetName(e.target.value);
+    configManager.saveToStorage();
+  });
+
+  if (elements.requiresJs) {
+    elements.requiresJs.addEventListener('change', (e) => {
+      configManager.setRequiresJs(e.target.checked);
+      configManager.saveToStorage();
+    });
+  }
+
+  // Manual edits for generic selectors
+  elements.containerSelectorDisplay.addEventListener('input', async (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    configManager.setContainerSelector(newSelector);
+    configManager.saveToStorage();
+
+    const tab = await getCurrentTab();
+    chrome.tabs.sendMessage(tab.id, { action: 'testSelector', selector: newSelector, containerSelector: null }, (result) => {
+      if (result && result.valid) {
+        elements.containerCountDisplay.textContent = result.count;
+      } else {
+        elements.containerCountDisplay.textContent = '0 (Invalid)';
+      }
+    });
+  });
+
+  elements.paginationSelectorDisplay.addEventListener('input', (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    const maxPages = parseInt(elements.maxPagesInput.value) || 5;
+    const currentTemplate = elements.paginationTemplateInput.value || null;
+    configManager.setPagination(newSelector, maxPages, 'selector', currentTemplate);
+    configManager.saveToStorage();
+    // Update summary text as well
+    elements.maxPagesDisplay.textContent = maxPages;
+  });
+
+  elements.maxPagesInput.addEventListener('input', (e) => {
+    const maxPages = parseInt(e.target.value) || 5;
+    const currentSelector = configManager.config.pagination?.selector || '';
+    const currentTemplate = configManager.config.pagination?.template || null;
+    if (currentSelector || currentTemplate) {
+      const method = currentSelector ? 'selector' : 'numeric';
+      configManager.setPagination(currentSelector, maxPages, method, currentTemplate);
+      configManager.saveToStorage();
+      elements.maxPagesDisplay.textContent = maxPages;
+    }
+  });
+
+  elements.paginationTemplateInput.addEventListener('input', (e) => {
+    const template = e.target.value;
+    const maxPages = parseInt(elements.maxPagesInput.value) || 5;
+    const currentSelector = configManager.config.pagination?.selector || '';
+
+    // Set pagination even if selector is empty (fallback to numeric method)
+    const method = currentSelector ? 'selector' : 'numeric';
+    configManager.setPagination(currentSelector, maxPages, method, template || null);
+    configManager.saveToStorage();
+
+    if (template || currentSelector) {
+      elements.paginationStatus.classList.remove('hidden');
+    }
+  });
+
+  elements.linkSelectorDisplay.addEventListener('input', async (e) => {
+    const newSelector = e.target.value;
+    if (!newSelector) return;
+    configManager.setLinkSelector(newSelector);
+    configManager.saveToStorage();
+
+    const tab = await getCurrentTab();
+    chrome.tabs.sendMessage(tab.id, { action: 'testSelector', selector: newSelector, containerSelector: configManager.config.container_selector }, (result) => {
+      if (result && result.valid) {
+        elements.linkCountDisplay.textContent = result.count;
+      } else {
+        elements.linkCountDisplay.textContent = '0 (Invalid)';
+      }
+    });
+  });
+}
+
+// Listen for messages from content script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'containerSelected') {
+    handleContainerSelected(request.data);
+  } else if (request.action === 'fieldSelected') {
+    handleFieldSelected(request.data);
+  } else if (request.action === 'paginationSelected') {
+    handlePaginationSelected(request.data);
+  } else if (request.action === 'linkSelected') {
+    handleLinkSelected(request.data);
+  }
+});
+
+// ============================================================================
+// WIZARD NAVIGATION
+// ============================================================================
+
+function navigateToStep(stepName) {
+  // Hide all steps
+  Object.keys(steps).forEach(key => {
+    steps[key].classList.add('hidden');
+  });
+
+  // Show target step
+  steps[stepName].classList.remove('hidden');
+
+  // Update wizard nav
+  document.querySelectorAll('.wizard-step').forEach(step => {
+    step.classList.remove('active');
+    if (step.dataset.step === stepName) {
+      step.classList.add('active');
+    }
+  });
+
+  currentStep = stepName;
+
+  // Save current step to storage so we remember it when popup reopens
+  chrome.storage.local.set({ currentStep: stepName });
+
+  // Update export summary if navigating to export
+  if (stepName === 'export') {
+    updateExportSummary();
+  }
+}
+
+// ============================================================================
+// PICKER CONTROL
+// ============================================================================
+
+async function startPicker(mode) {
+  isPicking = true;
+  const tab = await getCurrentTab();
+
+  let containerSelector = configManager.config.container_selector;
+  if (mode === 'field' && configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
+
+  chrome.tabs.sendMessage(tab.id, {
+    action: 'togglePicker',
+    state: true,
+    mode: mode,
+    container: containerSelector
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      showStatus('Please refresh the page first', 'error');
+      isPicking = false;
+    } else {
+      // Update button states
+      updatePickerButtons(mode, true);
+      showStatus(`Click on an element on the page to select it`, 'info');
+    }
+  });
+}
+
+async function stopPicker() {
+  isPicking = false;
+  const tab = await getCurrentTab();
+
+  chrome.tabs.sendMessage(tab.id, {
+    action: 'togglePicker',
+    state: false
+  });
+
+  updatePickerButtons(null, false);
+}
+
+function updatePickerButtons(mode, active) {
+  const buttons = {
+    container: elements.btnPickContainer,
+    field: elements.btnPickField,
+    pagination: elements.btnPickPagination,
+    link: elements.btnPickLink
+  };
+
+  // Bug 3 fix: guard against null if a button element isn't found in the DOM
+  Object.keys(buttons).forEach(key => {
+    if (!buttons[key]) return;
+    if (key === mode && active) {
+      buttons[key].textContent = 'Stop Picking';
+      buttons[key].classList.remove('btn-primary');
+      buttons[key].classList.add('btn-danger');
+    } else {
+      buttons[key].textContent = getButtonText(key);
+      buttons[key].classList.remove('btn-danger');
+      buttons[key].classList.add('btn-primary');
+    }
+  });
+}
+
+function getButtonText(mode) {
+  const texts = {
+    container: 'Pick Container Element',
+    field: 'Pick Field Element',
+    pagination: 'Pick Next Button',
+    link: 'Pick Detail Link'
+  };
+  return texts[mode];
+}
+
+// ============================================================================
+// CONTAINER HANDLING
+// ============================================================================
+
+function handleContainerSelected(data) {
+  stopPicker();
+
+  configManager.setContainerSelector(data.selector);
+  configManager.saveToStorage();
+
+  elements.containerSelectorDisplay.value = data.selector;
+  elements.containerCountDisplay.textContent = data.count;
+  elements.containerStatus.classList.remove('hidden');
+
+  // --- ADD AI SUGGESTION BUTTON ---
+  const existingBtn = document.getElementById('btnAiContainer');
+  if (existingBtn) existingBtn.remove();
+
+  const aiBtn = document.createElement('button');
+  aiBtn.id = 'btnAiContainer';
+  aiBtn.className = 'btn btn-secondary btn-block mt-1';
+  aiBtn.style.background = '#fef3c7';
+  aiBtn.style.borderColor = '#f59e0b';
+  aiBtn.style.color = '#92400e';
+  aiBtn.style.fontSize = '11px';
+  aiBtn.innerHTML = '✨ Analyze Container with DeepSeek AI';
+
+  aiBtn.onclick = () => {
+    aiBtn.disabled = true;
+    aiBtn.innerHTML = '⏳ Analyzing...';
+    // Fallback to data.selector if data.candidates isn't built yet
+    const candidates = data.candidates || { primary: data.selector };
+    injectAiSelectors(data.htmlContext, candidates, 'container', elements.containerStatus).then(() => {
+      aiBtn.innerHTML = '✨ AI Analysis Complete';
+    });
+  };
+
+  elements.containerStatus.appendChild(aiBtn);
+  // --------------------------------
+
+  updateSummary();
+  showStatus(`Container configured: ${data.count} items found`, 'success');
+
+  // NOTE: You may want to comment this out so you have time to click the AI button!
+  // navigateToStep('fields');
+}
+
+function clearContainer() {
+  configManager.clearContainerSelector();
+  configManager.saveToStorage();
+
+  elements.containerStatus.classList.add('hidden');
+  updateSummary();
+  showStatus('Container cleared', 'info');
+}
+
+// ============================================================================
+// FIELD HANDLING
+// ============================================================================
+
+function handleFieldSelected(data) {
+  stopPicker();
+  currentSelection = data;
+
+  // 1. Show selection panel first so the user sees immediate UI feedback
+  elements.fieldSelectionPanel.classList.remove('hidden');
+
+  // Clear previous input
+  elements.fieldNameInput.value = '';
+
+  // Display text preview safely
+  elements.textPreview.textContent = data.text || 'No text content';
+
+  // 2. Clear old button and configure the fresh AI button
+  const existingAiBtn = document.getElementById('btnAiSuggestSelector');
+  if (existingAiBtn) existingAiBtn.remove();
+
+  const aiBtn = document.createElement('button');
+  aiBtn.id = 'btnAiSuggestSelector';
+  aiBtn.className = 'btn btn-secondary btn-block mb-1';
+  aiBtn.style.background = '#fef3c7'; // Light amber
+  aiBtn.style.borderColor = '#f59e0b';
+  aiBtn.style.color = '#92400e';
+  aiBtn.style.fontSize = '11px';
+  aiBtn.style.display = 'flex';
+  aiBtn.style.alignItems = 'center';
+  aiBtn.style.justifyContent = 'center';
+  aiBtn.style.gap = '8px';
+  aiBtn.innerHTML = '✨ Analyze Selectors with DeepSeek AI';
+  
+  // Wire it up directly to your robust auditor function
+  aiBtn.onclick = () => {
+    auditSelectorsWithAi(data);
+  };
+
+  elements.textPreview.after(aiBtn);
+
+  // 3. Render standard candidate choices safely
+  displaySelectorOptions(data);
+
+  // Scroll to selection panel smoothly
+  elements.fieldSelectionPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function auditSelectorsWithAi(data) {
+  const btn = document.getElementById('btnAiSuggestSelector');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Thinking...';
+
+  try {
+    let token = localStorage.getItem('auth_token');
+    if (!token) {
+      const stored = await chrome.storage.local.get(['token']);
+      token = stored.token;
+    }
+
+    // Strip null/empty values before sending — prevents 422 from Dict[str,str] schema
+    const rawCandidates = data.selectors || data.candidates || {};
+    const candidates = Object.fromEntries(
+      Object.entries(rawCandidates).filter(([_, v]) => v && v !== 'null')
+    );
+
+    const res = await fetch('http://localhost:8000/api/ai/suggest-selector', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        html_context: data.htmlContext || [],
+        candidates,
+        mode: 'field',
+        last_fields: configManager.getFields()
+      })
+    });
+
+    if (!res.ok) throw new Error(`AI request failed with status: ${res.status}`);
+    const result = await res.json();
+
+    const tab = await getCurrentTab();
+    const optionsContainer = document.getElementById('selectorOptions') || elements.selectorOptions;
+    // Track whether any AI option was auto-selected so only the first one gets
+    // selected (ai_css takes priority over ai_xpath if both come back).
+    let aiOptionSelected = false;
+
+    /**
+     * Builds a full first-class selector option from an AI-generated selector
+     * string, live-tests it against the page, and prepends it to the list.
+     * @param {string} key       - Internal key, e.g. 'aiCss' or 'aiXpath'
+     * @param {string} label     - Display name shown in the UI
+     * @param {string} selector  - The CSS or XPath string from the AI
+     * @param {string} reason    - AI's explanation text
+     * @param {boolean} autoSelect - Whether to auto-click this option
+     */
+    function injectAiOption(key, label, selector, reason, autoSelect) {
+      // De-duplicate: if this exact selector is already in the list, just
+      // highlight it rather than adding a duplicate card.
+      const existing = [...optionsContainer.querySelectorAll('.editable-selector')]
+        .find(inp => inp.value.trim() === selector.trim());
+
+      if (existing) {
+        const existingCard = existing.closest('.selector-option');
+        if (existingCard) {
+          styleAsAiRecommended(existingCard, `💡 ${label}: ${reason || 'AI matched an existing option.'}`);
+          if (autoSelect) existingCard.click();
+        }
+        return;
+      }
+
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'testSelector',
+        selector,
+        containerSelector: data.containerSelector
+      }, (testResult) => {
+        const matchCount = (testResult && testResult.valid) ? testResult.count : 0;
+        const option = createSelectorOption(
+          { name: label, key, selector },
+          matchCount,
+          false,           // never pre-selected in createSelectorOption itself
+          data.containerSelector
+        );
+
+        styleAsAiRecommended(option, `💡 ${label}: ${reason || 'AI synthesized.'}`);
+
+        if (optionsContainer) {
+          optionsContainer.prepend(option);
+          if (autoSelect) option.click();
+        }
+      });
+    }
+
+    // Helper to apply the amber AI highlight + reason text to any option card
+    function styleAsAiRecommended(optionEl, reasonText) {
+      optionEl.classList.add('ai-recommended');
+      optionEl.style.borderColor = '#f59e0b';
+      optionEl.style.background = '#fffbeb';
+
+      let reason = optionEl.querySelector('.ai-reason');
+      if (!reason) {
+        reason = document.createElement('div');
+        reason.className = 'ai-reason';
+        reason.style.cssText = 'font-size:9px;color:#92400e;margin-top:4px;font-style:italic;';
+        optionEl.querySelector('.selector-info')?.appendChild(reason);
+      }
+      reason.textContent = reasonText;
+    }
+
+    // ── Step 1: Inject ai_css if the backend returned one ──────────────────
+    if (result.ai_css) {
+      injectAiOption(
+        'aiCss',
+        '✨ AI CSS',
+        result.ai_css,
+        result.reason,
+        true   // auto-select the CSS option first
+      );
+      aiOptionSelected = true;
+    }
+
+    // ── Step 2: Inject ai_xpath as a secondary alternative ─────────────────
+    if (result.ai_xpath) {
+      injectAiOption(
+        'aiXpath',
+        '✨ AI XPath',
+        result.ai_xpath,
+        result.reason,
+        !aiOptionSelected   // only auto-select if CSS wasn't injected
+      );
+      if (!aiOptionSelected) aiOptionSelected = true;
+    }
+
+    // ── Step 3: Highlight the AI's recommended existing candidate ───────────
+    // Do this regardless of whether new options were injected, so the user
+    // can see which of their original options the AI preferred.
+    if (result.recommended_key) {
+      const options = document.querySelectorAll('.selector-option');
+      options.forEach(opt => {
+        const radioInput = opt.querySelector('input[type="radio"]');
+        if (radioInput && radioInput.value === result.recommended_key) {
+          styleAsAiRecommended(opt, `💡 AI Preferred: ${result.reason || 'Recommended pattern.'}`);
+          // Only auto-click the recommended key if no synthesized option was injected
+          if (!aiOptionSelected) {
+            opt.click();
+            aiOptionSelected = true;
+          }
+        }
+      });
+    }
+
+    btn.innerHTML = '✨ AI Audit Complete!';
+    setTimeout(() => {
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+    }, 3000);
+
+  } catch (err) {
+    console.error('AI Audit Exception:', err);
+    btn.innerHTML = '❌ AI Error';
+    btn.style.background = '#fee2e2';
+    setTimeout(() => {
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+      btn.style.background = '#fef3c7';
+    }, 2000);
+  }
+}
+/**
+ * Fetches AI selector suggestions and injects them into the UI.
+ * @param {Array} htmlContext - The node ancestry from content.js
+ * @param {Object} localCandidates - Your existing generated selectors { key: "selector string" }
+ * @param {String} mode - "container", "pagination", "list_detail", or "field"
+ * @param {HTMLElement} uiContainer - The div where radio options are rendered
+ */
+async function injectAiSelectors(htmlContext, localCandidates, mode, uiContainer) {
+  try {
+    // 1. Show a quick loading state
+    const loader = document.createElement('div');
+    loader.innerHTML = `<em>✨ AI is analyzing ${mode} structure...</em>`;
+    uiContainer.appendChild(loader);
+
+    // 2. Fetch from backend
+    const response = await fetch('http://localhost:8000/api/ai/suggest-selector', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html_context: htmlContext,
+        candidates: localCandidates,
+        mode: mode,
+        last_fields: {} // Map your existing saved fields here if applicable
+      })
+    });
+
+    const aiResult = await response.json();
+    loader.remove(); // Clear loader
+
+    // 3. Append the AI Options (if provided)
+    if (aiResult.ai_css) {
+      appendSelectorOption(uiContainer, 'ai_css', aiResult.ai_css, '✨ AI Optimized CSS');
+    }
+    if (aiResult.ai_xpath) {
+      appendSelectorOption(uiContainer, 'ai_xpath', aiResult.ai_xpath, '✨ AI Optimized XPath');
+    }
+
+    // 4. Optionally display the AI's reasoning text in a small info box
+    const reasonBox = document.createElement('div');
+    reasonBox.className = 'ai-reasoning-box';
+    reasonBox.style.cssText = 'font-size: 0.85em; color: #666; margin-top: 8px; border-left: 2px solid #007bff; padding-left: 8px;';
+    reasonBox.innerText = aiResult.reason;
+    uiContainer.appendChild(reasonBox);
+
+  } catch (error) {
+    console.error("AI selector audit failed, falling back to local only:", error);
+  }
+}
+
+// Helper to append a radio button to your existing UI
+function appendSelectorOption(container, key, value, labelText) {
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = `
+        <label>
+            <input type="radio" name="active_selector" value="${value}" data-key="${key}">
+            <strong>${labelText}:</strong> <code>${value}</code>
+        </label>
+    `;
+  // Attach your standard 'change' event listeners here to trigger testSelectorOnPage
+  container.appendChild(wrapper);
+}
+
+function displaySelectorOptions(data) {
+  elements.selectorOptions.innerHTML = '';
+
+  // Add context info if in container
+  if (data.isInContainer) {
+    const info = document.createElement('div');
+    info.className = 'info-box info';
+    info.style.marginBottom = '10px';
+    info.innerHTML = '<strong>Container-Relative Mode:</strong> Selectors are relative to each container item';
+    elements.selectorOptions.appendChild(info);
+  }
+
+  const selectors = [
+    { name: 'Primary', key: 'primary', selector: data.selectors.primary },
+    { name: 'Label-Aware XPath', key: 'labelXPath', selector: data.selectors.labelXPath },
+    { name: 'Simple Class', key: 'simpleClass', selector: data.selectors.simpleClass },
+    { name: 'Tag + Class', key: 'tagClass', selector: data.selectors.tagClass },
+    { name: 'CSS Path', key: 'cssPath', selector: data.selectors.cssPath },
+    { name: 'Descendant', key: 'descendant', selector: data.selectors.descendant },
+    { name: 'Data Attribute', key: 'dataAttr', selector: data.selectors.dataAttr },
+    { name: 'XPath', key: 'xpath', selector: data.selectors.xpath }
+  ];
+
+  let hasOptions = false;
+
+  selectors.forEach((item, index) => {
+    if (!item.selector || item.selector === 'null') return;
+
+    const matchCount = data.matchCounts[item.key] || 0;
+    const option = createSelectorOption(item, matchCount, index === 0 && !hasOptions, data.containerSelector);
+
+    elements.selectorOptions.appendChild(option);
+    hasOptions = true;
+  });
+
+  if (!hasOptions) {
+    elements.selectorOptions.innerHTML = '<p style="color: #999; font-size: 12px; text-align: center; padding: 20px;">No selectors available</p>';
+  }
+}
+
+function createSelectorOption(item, matchCount, isSelected, containerSelector) {
+  const div = document.createElement('div');
+  div.className = 'selector-option' + (isSelected ? ' selected' : '');
+
+  let matchClass = 'none';
+  let matchText = '0';
+  if (matchCount === 1) {
+    matchClass = 'unique';
+    matchText = '1';
+  } else if (matchCount > 1) {
+    matchClass = 'multiple';
+    matchText = matchCount.toString();
+  }
+
+  div.innerHTML = `
+    <input type="radio" name="selector" value="${item.key}" ${isSelected ? 'checked' : ''}>
+    <div class="selector-info">
+      <div class="selector-name">${item.name}</div>
+      <div class="selector-text">${escapeHtml(item.selector)}</div>
+      <input type="text" class="editable-selector" value="${escapeHtml(item.selector)}" data-key="${item.key}">
+    </div>
+    <span class="match-count ${matchClass}" title="${matchCount} match(es)">${matchText}</span>
+  `;
+
+  // Click handler for the option
+  div.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'INPUT') {
+      const radio = div.querySelector('input[type="radio"]');
+      radio.checked = true;
+      document.querySelectorAll('.selector-option').forEach(opt => opt.classList.remove('selected'));
+      div.classList.add('selected');
+    }
+  });
+
+  // Live validation on edit
+  const editableInput = div.querySelector('.editable-selector');
+  const matchBadge = div.querySelector('.match-count');
+
+  editableInput.addEventListener('input', async (e) => {
+    const newSelector = e.target.value;
+
+    // Test selector on page
+    const tab = await getCurrentTab();
+    chrome.tabs.sendMessage(tab.id, {
+      action: 'testSelector',
+      selector: newSelector,
+      containerSelector: containerSelector
+    }, (result) => {
+      if (result && result.valid) {
+        const count = result.count;
+        matchBadge.textContent = count;
+
+        if (count === 1) {
+          matchBadge.className = 'match-count unique';
+        } else if (count > 1) {
+          matchBadge.className = 'match-count multiple';
+        } else {
+          matchBadge.className = 'match-count none';
+        }
+      } else {
+        matchBadge.textContent = 'ERR';
+        matchBadge.className = 'match-count none';
+      }
+    });
+  });
+
+  return div;
+}
+
+async function addField() {
+  const fieldName = elements.fieldNameInput.value.trim();
+
+  if (!fieldName) {
+    showStatus('Please enter a field name', 'error');
+    return;
+  }
+
+  // Validate field name
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fieldName)) {
+    showStatus('Field name must start with a letter and contain only letters, numbers, and underscores', 'error');
+    return;
+  }
+
+  // Get selected selector
+  const selectedOption = elements.selectorOptions.querySelector('.selector-option.selected');
+  if (!selectedOption) {
+    showStatus('Please select a selector', 'error');
+    return;
+  }
+
+  // Get the (possibly edited) selector value
+  const selectorInput = selectedOption.querySelector('.editable-selector');
+  const selector = selectorInput.value.trim();
+
+  if (!selector) {
+    showStatus('Selector cannot be empty', 'error');
+    return;
+  }
+
+  // Add field to config
+  try {
+    configManager.addField(fieldName, selector);
+    configManager.saveToStorage();
+
+    showStatus(`Field "${fieldName}" added successfully`, 'success');
+    renderFieldList();
+    updateSummary();
+
+    // Clear selection
+    cancelFieldSelection();
+
+  } catch (error) {
+    showStatus(error.message, 'error');
+  }
+}
+
+function cancelFieldSelection() {
+  elements.fieldSelectionPanel.classList.add('hidden');
+  currentSelection = null;
+}
+
+function renderFieldList() {
+  const fields = configManager.getFields();
+  const fieldKeys = Object.keys(fields);
+
+  if (fieldKeys.length === 0) {
+    elements.emptyFieldsState.classList.remove('hidden');
+    elements.fieldList.querySelectorAll('.field-item').forEach(item => item.remove());
+    return;
+  }
+
+  elements.emptyFieldsState.classList.add('hidden');
+  elements.fieldList.innerHTML = '';
+
+  fieldKeys.forEach(fieldName => {
+    const selector = fields[fieldName];
+    const fieldItem = createFieldItem(fieldName, selector);
+    elements.fieldList.appendChild(fieldItem);
+  });
+}
+
+function createFieldItem(fieldName, selector) {
+  const div = document.createElement('div');
+  div.className = 'field-item';
+
+  div.innerHTML = `
+    <div class="field-info">
+      <div class="field-name">${escapeHtml(fieldName)}</div>
+      <div class="field-selector" title="${escapeHtml(selector)}">${escapeHtml(selector)}</div>
+    </div>
+    <div class="field-actions">
+      <button class="icon-btn" data-action="test" title="Test selector">Test</button>
+      <button class="icon-btn" data-action="delete" title="Delete field">Delete</button>
+    </div>
+  `;
+
+  div.querySelector('[data-action="test"]').addEventListener('click', () => testField(fieldName, selector));
+  div.querySelector('[data-action="delete"]').addEventListener('click', () => deleteField(fieldName));
+
+  return div;
+}
+
+async function testField(fieldName, selector) {
+  showStatus(`Testing ${fieldName}...`, 'info');
+
+  const tab = await getCurrentTab();
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
+
+  chrome.tabs.sendMessage(tab.id, {
+    action: 'testSelector',
+    selector: selector,
+    containerSelector: containerSelector
+  }, (result) => {
+    if (result && result.valid) {
+      if (result.count > 0) {
+        showStatus(`✓ ${fieldName}: Found ${result.count} match(es)`, 'success');
+      } else {
+        showStatus(`⚠ ${fieldName}: Selector valid but found 0 matches`, 'warning');
+      }
+    } else {
+      showStatus(`✗ ${fieldName}: ${result.error || 'Invalid selector'}`, 'error');
+    }
+  });
+}
+
+function deleteField(fieldName) {
+  if (confirm(`Delete field "${fieldName}"?`)) {
+    configManager.removeField(fieldName);
+    configManager.saveToStorage();
+    renderFieldList();
+    updateSummary();
+    showStatus(`Field "${fieldName}" deleted`, 'info');
+  }
+}
+
+async function previewData() {
+  const fields = configManager.getFields();
+  const fieldKeys = Object.keys(fields);
+
+  if (fieldKeys.length === 0) {
+    showStatus('No fields to preview', 'error');
+    return;
+  }
+
+  showStatus('Generating preview...', 'info');
+
+  const tab = await getCurrentTab();
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
+
+  chrome.tabs.sendMessage(tab.id, {
+    action: 'previewData',
+    fields: fields,
+    containerSelector: containerSelector
+  }, (result) => {
+    if (result && result.success) {
+      displayPreview(result.preview, result.totalContainers);
+    } else {
+      showStatus(`Preview failed: ${result.error}`, 'error');
+    }
+  });
+}
+
+function displayPreview(data, totalContainers) {
+  elements.dataPreviewSection.classList.remove('hidden');
+
+  if (data.length === 0) {
+    elements.dataPreviewContent.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No data extracted</p>';
+    return;
+  }
+
+  // Create table
+  const fields = Object.keys(data[0]).filter(k => k !== '_containerIndex');
+
+  let html = `<div style="margin-bottom: 8px; font-size: 11px; color: #666;">Showing ${data.length} of ${totalContainers} items</div>`;
+  html += '<table class="preview-table"><thead><tr>';
+
+  fields.forEach(field => {
+    html += `<th>${escapeHtml(field)}</th>`;
+  });
+
+  html += '</tr></thead><tbody>';
+
+  data.forEach(item => {
+    html += '<tr>';
+    fields.forEach(field => {
+      const value = item[field];
+      const displayValue = value ? (value.length > 50 ? value.substring(0, 50) + '...' : value) : '-';
+      html += `<td title="${escapeHtml(value || '')}">${escapeHtml(displayValue)}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+
+  elements.dataPreviewContent.innerHTML = html;
+  elements.dataPreviewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  showStatus('Preview generated successfully', 'success');
+}
+
+function closePreview() {
+  elements.dataPreviewSection.classList.add('hidden');
+}
+
+// ============================================================================
+// ADVANCED OPTIONS
+// ============================================================================
+
+function handlePaginationSelected(data) {
+  stopPicker();
+
+  const maxPagesInput = document.getElementById('maxPagesInput');
+  const maxPages = maxPagesInput ? (parseInt(maxPagesInput.value) || 5) : 5;
+  const templateInput = document.getElementById('paginationTemplateInput');
+  const template = templateInput ? templateInput.value || null : null;
+
+  configManager.setPagination(data.selector, maxPages, 'selector', template);
+  configManager.saveToStorage();
+
+  // --- ADD AI SUGGESTION BUTTON ---
+  const pagStatusBox = document.getElementById('paginationStatus');
+  pagStatusBox.classList.remove('hidden');
+
+  const existingBtn = document.getElementById('btnAiPagination');
+  if (existingBtn) existingBtn.remove();
+
+  const aiBtn = document.createElement('button');
+  aiBtn.id = 'btnAiPagination';
+  aiBtn.className = 'btn btn-secondary btn-block mt-1';
+  aiBtn.style.background = '#fef3c7';
+  aiBtn.style.borderColor = '#f59e0b';
+  aiBtn.style.color = '#92400e';
+  aiBtn.style.fontSize = '11px';
+  aiBtn.innerHTML = '✨ Analyze Pagination with DeepSeek AI';
+
+  aiBtn.onclick = () => {
+    aiBtn.disabled = true;
+    aiBtn.innerHTML = '⏳ Analyzing...';
+    const candidates = data.candidates || { primary: data.selector };
+    injectAiSelectors(data.htmlContext, candidates, 'pagination', pagStatusBox).then(() => {
+      aiBtn.innerHTML = '✨ AI Analysis Complete';
+    });
+  };
+
+  pagStatusBox.appendChild(aiBtn);
+  // --------------------------------
+
+  updateAdvancedStatus();
+  showStatus('Pagination configured', 'success');
+}
+
+function clearPagination() {
+  configManager.clearPagination();
+  configManager.saveToStorage();
+  updateAdvancedStatus();
+  showStatus('Pagination cleared', 'info');
+}
+
+function handleLinkSelected(data) {
+  stopPicker();
+
+  configManager.setLinkSelector(data.selector);
+  configManager.saveToStorage();
+
+  // --- ADD AI SUGGESTION BUTTON ---
+  const linkStatusBox = document.getElementById('linkStatus');
+  linkStatusBox.classList.remove('hidden');
+
+  const existingBtn = document.getElementById('btnAiLink');
+  if (existingBtn) existingBtn.remove();
+
+  const aiBtn = document.createElement('button');
+  aiBtn.id = 'btnAiLink';
+  aiBtn.className = 'btn btn-secondary btn-block mt-1';
+  aiBtn.style.background = '#fef3c7';
+  aiBtn.style.borderColor = '#f59e0b';
+  aiBtn.style.color = '#92400e';
+  aiBtn.style.fontSize = '11px';
+  aiBtn.innerHTML = '✨ Analyze Link with DeepSeek AI';
+
+  aiBtn.onclick = () => {
+    aiBtn.disabled = true;
+    aiBtn.innerHTML = '⏳ Analyzing...';
+    const candidates = data.candidates || { primary: data.selector };
+    injectAiSelectors(data.htmlContext, candidates, 'list_detail', linkStatusBox).then(() => {
+      aiBtn.innerHTML = '✨ AI Analysis Complete';
+    });
+  };
+
+  linkStatusBox.appendChild(aiBtn);
+  // --------------------------------
+
+  updateAdvancedStatus();
+  updateSummary();
+  showStatus(`Link selector configured: ${data.count} links found`, 'success');
+}
+
+function clearLink() {
+  configManager.clearLinkSelector();
+  configManager.saveToStorage();
+  updateAdvancedStatus();
+  updateSummary();
+  showStatus('Link selector cleared', 'info');
+}
+
+function updateAdvancedStatus() {
+  // Pagination
+  if (configManager.config.pagination) {
+    elements.paginationSelectorDisplay.value = configManager.config.pagination.selector || '';
+    elements.maxPagesDisplay.textContent = configManager.config.pagination.max_pages;
+    elements.maxPagesInput.value = configManager.config.pagination.max_pages;
+    if (configManager.config.pagination.template) {
+      elements.paginationTemplateInput.value = configManager.config.pagination.template;
+    }
+    if (configManager.config.pagination.selector || configManager.config.pagination.template) {
+      elements.paginationStatus.classList.remove('hidden');
+    }
+  } else {
+    elements.paginationStatus.classList.add('hidden');
+  }
+
+  // Link selector
+  if (configManager.config.link_selector) {
+    elements.linkSelectorDisplay.value = configManager.config.link_selector;
+    elements.linkStatus.classList.remove('hidden');
+
+    // Count links (async)
+    getCurrentTab().then(tab => {
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'testSelector',
+        selector: configManager.config.link_selector,
+        containerSelector: configManager.config.container_selector
+      }, (result) => {
+        if (result && result.valid) {
+          elements.linkCountDisplay.textContent = result.count;
+        }
+      });
+    });
+  } else {
+    elements.linkStatus.classList.add('hidden');
+  }
+}
+
+// ============================================================================
+// EXPORT
+// ============================================================================
+
+function updateExportSummary() {
+  const config = configManager.config;
+  const fields = Object.keys(config.item_selectors);
+
+  let html = '<div class="row"><span class="label">Dataset:</span><span class="value">' +
+    (config.dataset_name || 'Unnamed') + '</span></div>';
+
+  html += '<div class="row"><span class="label">Start URL:</span><span class="value">' +
+    (config.start_url ? new URL(config.start_url).hostname : '-') + '</span></div>';
+
+  html += '<div class="row"><span class="label">Crawl Type:</span><span class="value">' +
+    config.crawl_type + '</span></div>';
+
+  if (config.requires_js) {
+    html += '<div class="row"><span class="label">JS Rendering:</span><span class="value">Yes</span></div>';
+  }
+
+  html += '<div class="row"><span class="label">Fields:</span><span class="value">' +
+    fields.length + '</span></div>';
+
+  if (config.container_selector) {
+    html += '<div class="row"><span class="label">Container:</span><span class="value">Yes</span></div>';
+  }
+
+  if (config.pagination) {
+    html += '<div class="row"><span class="label">Pagination:</span><span class="value">Yes (' +
+      config.pagination.max_pages + ' pages)</span></div>';
+  }
+
+  if (config.link_selector) {
+    html += '<div class="row"><span class="label">List-Detail:</span><span class="value">Yes</span></div>';
+  }
+
+  elements.exportSummary.innerHTML = html;
+}
+
+async function testAllSelectors() {
+  const fields = configManager.getFields();
+  const fieldKeys = Object.keys(fields);
+
+  if (fieldKeys.length === 0) {
+    showStatus('No fields to test', 'error');
+    return;
+  }
+
+  showStatus(`Testing ${fieldKeys.length} fields...`, 'info');
+
+  const tab = await getCurrentTab();
+  let containerSelector = configManager.config.container_selector;
+  if (configManager.config.crawl_type === 'list-detail') {
+    containerSelector = null;
+  }
+  let passedCount = 0;
+  let results = [];
+
+  for (const fieldName of fieldKeys) {
+    const selector = fields[fieldName];
+
+    await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, {
+        action: 'testSelector',
+        selector: selector,
+        containerSelector: containerSelector
+      }, (result) => {
+        results.push({
+          field: fieldName,
+          selector: selector,
+          passed: result && result.valid && result.count > 0,
+          count: result?.count || 0,
+          error: result?.error,
+          samples: result?.matches?.slice(0, 3) || []
+        });
+        if (result && result.valid && result.count > 0) {
+          passedCount++;
+        }
+        resolve();
+      });
+    });
+  }
+
+  // Show results in modal
+  showTestResultsModal(results, passedCount, fieldKeys.length);
+}
+
+function showTestResultsModal(results, passedCount, totalCount) {
+  // Create modal
+  let modal = document.getElementById('test-results-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'test-results-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+    document.body.appendChild(modal);
+  }
+
+  const status = passedCount === totalCount ? 'PASSED' : 'FAILED';
+  const statusColor = passedCount === totalCount ? '#10b981' : '#f59e0b';
+
+  modal.innerHTML = `
+    <div style="
+      background: white;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    ">
+      <div style="padding: 16px; border-bottom: 1px solid #e5e7eb;">
+        <h3 style="margin: 0; font-size: 16px; color: #1f2937;">Test Results</h3>
+        <p style="margin: 8px 0 0 0; font-size: 14px; color: ${statusColor}; font-weight: 600;">
+          ${status}: ${passedCount}/${totalCount} fields
+        </p>
+      </div>
+      
+      <div style="overflow-y: auto; padding: 16px;">
+        ${results.map(r => `
+          <div style="
+            margin-bottom: 12px;
+            padding: 12px;
+            background: ${r.passed ? '#f0fdf4' : '#fef2f2'};
+            border-left: 3px solid ${r.passed ? '#10b981' : '#ef4444'};
+            border-radius: 4px;
+          ">
+            <div style="font-weight: 600; font-size: 13px; color: #1f2937; margin-bottom: 4px;">
+              ${r.passed ? '✓' : '✗'} ${r.field}
+            </div>
+            <div style="font-size: 11px; color: #6b7280; font-family: monospace; margin-bottom: 4px;">
+              ${r.selector}
+            </div>
+            <div style="font-size: 12px; color: ${r.passed ? '#059669' : '#dc2626'};">
+              ${r.passed ? `${r.count} matches found` : r.error || '0 matches'}
+            </div>
+            ${r.samples.length > 0 ? `
+              <div style="margin-top: 8px; font-size: 11px; color: #6b7280;">
+                <strong>Samples:</strong>
+                ${r.samples.map(s => `<div style="margin-top: 4px; padding: 4px; background: white; border-radius: 2px;">${s.text || s.tag}</div>`).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `).join('')}
+      </div>
+      
+      <div style="padding: 16px; border-top: 1px solid #e5e7eb; text-align: right;">
+        <button onclick="document.getElementById('test-results-modal').remove()" style="
+          padding: 8px 16px;
+          background: #2a2a2a;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 13px;
+        ">Close</button>
+      </div>
+    </div>
+  `;
+}
+
+function exportConfiguration() {
+  try {
+    const config = configManager.exportConfig();
+    const jsonStr = JSON.stringify(config, null, 2);
+
+    navigator.clipboard.writeText(jsonStr).then(() => {
+      showStatus('✓ Configuration copied to clipboard!', 'success');
+      console.log('Exported config:', config);
+    }).catch(err => {
+      showStatus('Failed to copy to clipboard', 'error');
+      console.error('Export error:', err);
+    });
+  } catch (error) {
+    showStatus(error.message, 'error');
+  }
+}
+
+async function startCrawl() {
+  try {
+    const config = configManager.exportConfig();
+
+    showStatus('Sending crawl request...', 'info');
+
+    const authHeader = await getAuthHeader();
+    const response = await fetch('http://localhost:8000/api/crawl', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeader
+      },
+      body: JSON.stringify(config)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    showStatus(`✓ Crawl started! Job ID: ${result['started crawl job']}`, 'success');
+    console.log('Crawl job:', result);
+
+  } catch (error) {
+    showStatus(`Failed to start crawl: ${error.message}`, 'error');
+    console.error('Crawl error:', error);
+  }
+}
+
+function clearAll() {
+  if (confirm('Clear all configuration? This cannot be undone.')) {
+    configManager.reset();
+    configManager.saveToStorage();
+
+    renderFieldList();
+    updateSummary();
+    updateAdvancedStatus();
+
+    elements.containerStatus.classList.add('hidden');
+    elements.dataPreviewSection.classList.add('hidden');
+
+    navigateToStep('setup');
+    showStatus('Configuration cleared', 'info');
+  }
+}
+
+// ============================================================================
+// UI HELPERS
+// ============================================================================
+
+function updateSummary() {
+  const summary = configManager.getSummary();
+
+  elements.fieldCount.textContent = summary.fieldCount;
+  elements.crawlMode.textContent = summary.mode;
+
+  if (elements.datasetName.value === '') {
+    elements.datasetName.value = summary.datasetName === 'Unnamed' ? '' : summary.datasetName;
+  }
+
+  if (elements.requiresJs) {
+    elements.requiresJs.checked = summary.requiresJs || false;
+  }
+}
+
+function showStatus(message, type = 'info') {
+  elements.statusMessage.textContent = message;
+  elements.statusMessage.className = `status-message show info-box ${type}`;
+
+  setTimeout(() => {
+    elements.statusMessage.classList.remove('show');
+  }, 5000);
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text.toString()
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function getCurrentTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+
+function setupAuthEventListeners() {
+  elements.btnLogin.addEventListener('click', loginUser);
+  elements.btnLogout.addEventListener('click', logoutUser);
+}
+
+async function checkAuth() {
+  const { token, username } = await chrome.storage.local.get(['token', 'username']);
+  if (token && username) {
+    updateAuthUI(true, username);
+  } else {
+    updateAuthUI(false);
+  }
+}
+
+async function loginUser() {
+  const username = elements.authUsername.value.trim();
+  const password = elements.authPassword.value.trim();
+
+  if (!username || !password) {
+    showStatus('Please enter username and password', 'error');
+    return;
+  }
+
+  showStatus('Logging in...', 'info');
+  try {
+    const formData = new URLSearchParams();
+    formData.append('username', username);
+    formData.append('password', password);
+
+    const res = await fetch('http://localhost:8000/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData
+    });
+
+    if (!res.ok) {
+      throw new Error(`Login failed: ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    await chrome.storage.local.set({
+      token: data.access_token,
+      username: username
+    });
+
+    updateAuthUI(true, username);
+    showStatus('Logged in successfully', 'success');
+  } catch (error) {
+    showStatus(`Login failed: ${error.message}`, 'error');
+  }
+}
+
+async function logoutUser() {
+  await chrome.storage.local.remove(['token', 'username']);
+  updateAuthUI(false);
+  showStatus('Logged out', 'info');
+}
+
+function updateAuthUI(isAuthenticated, username = '') {
+  if (isAuthenticated) {
+    elements.authUnauthenticated.classList.add('hidden');
+    elements.authAuthenticated.classList.remove('hidden');
+    elements.wizardContainer.classList.remove('hidden');
+    elements.displayUsername.textContent = username;
+    elements.userInitials.textContent = username.substring(0, 2).toUpperCase();
+  } else {
+    elements.authUnauthenticated.classList.remove('hidden');
+    elements.authAuthenticated.classList.add('hidden');
+    elements.wizardContainer.classList.add('hidden');
+    elements.authUsername.value = '';
+    elements.authPassword.value = '';
+  }
+}
+
+async function getAuthHeader() {
+  const { token } = await chrome.storage.local.get(['token']);
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+}

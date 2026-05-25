@@ -274,18 +274,24 @@ class UniversalSpider(scrapy.Spider):
         if self.container_selector:
             containers = response.css(self.container_selector)
             for container in containers:
-                links = container.css(self.link_selector)
+                if not self.link_selector or self.link_selector == "self":
+                    url = container.attrib.get("href") or container.css("::attr(href)").get()
+                    if url:
+                        yield process_url(url)
+                else:
+                    links = container.css(self.link_selector)
+                    for link in links:
+                        url = link.attrib.get("href") or link.css("::attr(href)").get()
+                        if url:
+                            yield process_url(url)
+        else:
+            # Fallback for configurations without a container
+            if self.link_selector and self.link_selector != "self":
+                links = response.css(self.link_selector)
                 for link in links:
                     url = link.attrib.get("href") or link.css("::attr(href)").get()
                     if url:
                         yield process_url(url)
-        else:
-            # Fallback for old configurations without a container
-            links = response.css(self.link_selector)
-            for link in links:
-                url = link.attrib.get("href") or link.css("::attr(href)").get()
-                if url:
-                    yield process_url(url)
 
     def parse_detail(self, response: Response):
         self.pages_crawled += 1

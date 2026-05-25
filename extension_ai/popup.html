@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 500px;
+      max-height: 700px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a1a;
+      background: #f5f5f5;
+      overflow-y: auto;
+    }
+
+    .header {
+      background: #2a2a2a;
+      color: white;
+      padding: 16px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 2px solid #404040;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .header .subtitle {
+      font-size: 11px;
+      opacity: 0.7;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+
+    .container {
+      padding: 16px;
+    }
+
+    .wizard-nav {
+      display: flex;
+      background: white;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      gap: 4px;
+    }
+
+    .wizard-step {
+      flex: 1;
+      padding: 8px;
+      border-radius: 4px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #f5f5f5;
+      color: #666;
+      border: 1px solid #e0e0e0;
+    }
+
+    .wizard-step.active {
+      background: #2a2a2a;
+      color: white;
+      border-color: #2a2a2a;
+    }
+
+    .wizard-step.completed {
+      background: #f0f0f0;
+      color: #2a2a2a;
+      border-color: #d0d0d0;
+    }
+
+    .wizard-step .step-number {
+      display: block;
+      font-size: 10px;
+      opacity: 0.7;
+      margin-bottom: 2px;
+    }
+
+    .section {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid #e0e0e0;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .section-description {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .btn-block {
+      display: block;
+      width: 100%;
+    }
+
+    .btn-primary {
+      background: #2a2a2a;
+      color: white;
+      border: 1px solid #2a2a2a;
+    }
+
+    .btn-primary:hover {
+      background: #1a1a1a;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .btn-primary:active {
+      background: #2a2a2a;
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #2a2a2a;
+      border: 1px solid #d0d0d0;
+    }
+
+    .btn-secondary:hover {
+      background: #f5f5f5;
+      border-color: #2a2a2a;
+    }
+
+    .btn-success {
+      background: #10b981;
+      color: white;
+      border: 1px solid #10b981;
+    }
+
+    .btn-success:hover {
+      background: #059669;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+      border: 1px solid #ef4444;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 11px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .input-group {
+      margin-bottom: 12px;
+    }
+
+    .input-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .input-field {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      font-size: 13px;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: #2a2a2a;
+      box-shadow: 0 0 0 3px rgba(42, 42, 42, 0.1);
+    }
+
+    .input-hint {
+      font-size: 10px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    .info-box {
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin: 8px 0;
+      border-left: 3px solid;
+    }
+
+    .info-box.info {
+      background: #f0f9ff;
+      border-color: #3b82f6;
+      color: #1e3a8a;
+    }
+
+    .info-box.success {
+      background: #f0fdf4;
+      border-color: #10b981;
+      color: #065f46;
+    }
+
+    .info-box.warning {
+      background: #fffbeb;
+      border-color: #f59e0b;
+      color: #92400e;
+    }
+
+    .info-box.error {
+      background: #fef2f2;
+      border-color: #ef4444;
+      color: #991b1b;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.active {
+      background: #10b981;
+      color: white;
+    }
+
+    .status-badge.inactive {
+      background: #d0d0d0;
+      color: #666;
+    }
+
+    .field-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field-item {
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .field-item:hover {
+      border-color: #2a2a2a;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .field-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .field-name {
+      font-weight: 600;
+      font-size: 12px;
+      color: #1a1a1a;
+    }
+
+    .field-selector {
+      font-size: 10px;
+      color: #666;
+      font-family: 'Courier New', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+
+    .field-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .icon-btn {
+      background: none;
+      border: 1px solid #d0d0d0;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      transition: all 0.2s;
+      color: #666;
+    }
+
+    .icon-btn:hover {
+      background: #2a2a2a;
+      border-color: #2a2a2a;
+      color: white;
+    }
+
+    .selector-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .selector-option {
+      background: #fafafa;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .selector-option:hover {
+      border-color: #2a2a2a;
+      background: #f5f5f5;
+    }
+
+    .selector-option.selected {
+      border-color: #2a2a2a;
+      background: #e8e8e8;
+    }
+
+    .selector-option input[type="radio"] {
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .selector-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .selector-name {
+      font-weight: 600;
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .selector-text {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: #1a1a1a;
+      word-break: break-all;
+    }
+
+    .selector-option .editable-selector {
+      width: 100%;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      padding: 4px 6px;
+      border: 1px solid #d0d0d0;
+      border-radius: 3px;
+      margin-top: 4px;
+    }
+
+    .match-count {
+      flex-shrink: 0;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .match-count.unique {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .match-count.multiple {
+      background: #dbeafe;
+      color: #1e3a8a;
+    }
+
+    .match-count.none {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      margin-top: 8px;
+    }
+
+    .preview-table th {
+      background: #2a2a2a;
+      color: white;
+      padding: 6px 8px;
+      text-align: left;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 10px;
+    }
+
+    .preview-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #e0e0e0;
+      color: #1a1a1a;
+    }
+
+    .preview-table tr:hover td {
+      background: #f5f5f5;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px 20px;
+      color: #999;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    .empty-state-text {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .status-message {
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin: 12px 0;
+      display: none;
+      animation: slideDown 0.3s ease;
+    }
+
+    .status-message.show {
+      display: block;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .text-center { text-align: center; }
+    .mt-1 { margin-top: 8px; }
+    .mb-1 { margin-bottom: 8px; }
+    .mt-2 { margin-top: 16px; }
+    .mb-2 { margin-bottom: 16px; }
+
+    .config-summary {
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-size: 11px;
+    }
+
+    .config-summary .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    .config-summary .label {
+      color: #666;
+      font-weight: 500;
+    }
+
+    .config-summary .value {
+      color: #1a1a1a;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    /* Bug 2 fix: inline max-pages input sits next to the picker button */
+    .pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .pagination-controls .input-field {
+      width: 80px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    .pagination-controls label {
+      font-size: 11px;
+      color: #666;
+      white-space: nowrap;
+    }
+
+    /* Auth Section */
+    .auth-section {
+      background: white;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px;
+      background: white;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      border: 1px solid #e0e0e0;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .user-avatar {
+      width: 24px;
+      height: 24px;
+      background: #2a2a2a;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header" style="background: linear-gradient(135deg, #2a2a2a 0%, #4a4a4a 100%);">
+    <h1>Web Scraper AI (DeepSeek)</h1>
+    <div class="subtitle" id="currentUrl">No page loaded</div>
+  </div>
+
+  <div class="container">
+    <!-- Auth Status / Login -->
+    <div id="auth-unauthenticated" class="auth-form">
+        <div class="input-label">Login to secure your data</div>
+        <input type="text" id="auth-username" class="input-field" placeholder="Username">
+        <input type="password" id="auth-password" class="input-field" placeholder="Password">
+        <button id="btn-login" class="btn btn-primary btn-block">Login</button>
+    </div>
+
+    <div id="auth-authenticated" class="auth-section hidden">
+        <div class="user-info">
+            <div class="user-avatar" id="user-initials">?</div>
+            <span id="display-username">Username</span>
+        </div>
+        <button id="btn-logout" class="btn btn-secondary btn-sm">Sign Out</button>
+    </div>
+
+    <div id="wizard-container" class="hidden">
+        <!-- Wizard Navigation -->
+        <div class="wizard-nav">
+      <div class="wizard-step active" data-step="setup">
+        <span class="step-number">01</span>
+        <span>Setup</span>
+      </div>
+      <div class="wizard-step" data-step="container">
+        <span class="step-number">02</span>
+        <span>Container</span>
+      </div>
+      <div class="wizard-step" data-step="fields">
+        <span class="step-number">03</span>
+        <span>Fields</span>
+      </div>
+      <div class="wizard-step" data-step="advanced">
+        <span class="step-number">04</span>
+        <span>Advanced</span>
+      </div>
+      <div class="wizard-step" data-step="export">
+        <span class="step-number">05</span>
+        <span>Export</span>
+      </div>
+    </div>
+
+    <!-- Status Message -->
+    <div id="statusMessage" class="status-message"></div>
+
+    <!-- Step 1: Setup -->
+    <div id="step-setup" class="wizard-content">
+      <div class="section">
+        <div class="section-title">Configuration Setup</div>
+        <div class="input-group">
+          <label class="input-label" for="datasetName">Dataset Name</label>
+          <input type="text" id="datasetName" class="input-field" placeholder="my_dataset">
+          <div class="input-hint">Used to identify this scraping job</div>
+        </div>
+
+        <div class="input-group mt-1">
+          <label class="input-label" style="display:flex; align-items:center; gap:8px; margin-bottom: 0;">
+            <input type="checkbox" id="requiresJs" style="margin:0; cursor:pointer;">
+            Requires JavaScript (SPA / Modern Sites)
+          </label>
+          <div class="input-hint">Enable if pagination or content requires JS rendering to load properly.</div>
+        </div>
+
+        <div class="config-summary mt-2">
+          <div class="row">
+            <span class="label">Target URL:</span>
+            <span class="value" id="summaryUrl">-</span>
+          </div>
+          <div class="row">
+            <span class="label">Crawl Mode:</span>
+            <span class="value" id="crawlMode">flat</span>
+          </div>
+          <div class="row">
+            <span class="label">Fields Configured:</span>
+            <span class="value" id="fieldCount">0</span>
+          </div>
+        </div>
+
+        <button id="btnNextToContainer" class="btn btn-primary btn-block mt-2">Continue to Container Setup</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Container Selection -->
+    <div id="step-container" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Container Selection (Optional)</div>
+        <div class="section-description">
+          If your target data repeats in a list (e.g., product cards, article listings), select one item to define the container. Skip this step if scraping a single page with unique fields.
+        </div>
+
+        <div id="containerStatus" class="info-box info hidden">
+          <strong>Container:</strong> <input type="text" id="containerSelectorDisplay" class="input-field" style="font-family: monospace; font-size: 11px; padding: 4px; margin: 4px 0;" /><br>
+          <strong>Items found:</strong> <span id="containerCountDisplay">0</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickContainer" class="btn btn-primary">Pick Container Element</button>
+          <button id="btnClearContainer" class="btn btn-secondary">Clear</button>
+        </div>
+
+        <div class="btn-group mt-2">
+          <button id="btnSkipContainer" class="btn btn-secondary">Skip</button>
+          <button id="btnNextToFields" class="btn btn-primary">Continue to Fields</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Field Selection -->
+    <div id="step-fields" class="wizard-content hidden">
+      <!-- Active Selection Panel -->
+      <div id="fieldSelectionPanel" class="section hidden">
+        <div class="section-title">Configure Field</div>
+
+        <div class="input-group">
+          <label class="input-label" for="fieldNameInput">Field Name</label>
+          <input type="text" id="fieldNameInput" class="input-field" placeholder="e.g., title, price, description">
+          <div class="input-hint">Use lowercase letters, numbers, and underscores only</div>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Extracted Text Preview</label>
+          <div id="textPreview" style="font-size: 11px; color: #666; padding: 8px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; font-style: italic; min-height: 40px;">
+            No text extracted
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Choose Selector</label>
+          <div id="selectorOptions" class="selector-options">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnAddField" class="btn btn-success">Add Field</button>
+          <button id="btnCancelField" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Field Management Section -->
+      <div class="section">
+        <div class="section-title">Configured Fields</div>
+
+        <div id="fieldList" class="field-list">
+          <div id="emptyFieldsState" class="empty-state">
+            <div class="empty-state-icon">□</div>
+            <div class="empty-state-text">No fields configured yet</div>
+          </div>
+        </div>
+
+        <button id="btnPickField" class="btn btn-primary btn-block mt-2">Pick Field Element</button>
+
+        <div class="btn-group mt-2">
+          <button id="btnBackToContainer" class="btn btn-secondary">Back</button>
+          <button id="btnPreviewData" class="btn btn-secondary">Preview Data</button>
+          <button id="btnNextToAdvanced" class="btn btn-primary">Continue</button>
+        </div>
+      </div>
+
+      <!-- Data Preview Modal -->
+      <div id="dataPreviewSection" class="section hidden">
+        <div class="section-title">Data Preview</div>
+        <div id="dataPreviewContent"></div>
+        <button id="btnClosePreview" class="btn btn-secondary btn-sm mt-1">Close Preview</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Advanced Options -->
+    <div id="step-advanced" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Pagination</div>
+        <div class="section-description">
+          Configure pagination to crawl multiple pages automatically.
+        </div>
+
+        <!-- Bug 2 fix: max pages input replaces the prompt() call -->
+        <div class="pagination-controls">
+          <label for="maxPagesInput">Max pages:</label>
+          <input
+            type="number"
+            id="maxPagesInput"
+            class="input-field"
+            value="5"
+            min="1"
+            max="50"
+          >
+        </div>
+
+        <div class="input-group mt-2">
+          <label class="input-label" for="paginationTemplateInput">URL Template (Optional)</label>
+          <input type="text" id="paginationTemplateInput" class="input-field" placeholder="e.g. https://site.com/page-{page}">
+          <div class="input-hint">Use {page} for the page number. Overrides selector href if provided.</div>
+        </div>
+
+        <div id="paginationStatus" class="info-box info hidden">
+          <strong>Selector:</strong> <input type="text" id="paginationSelectorDisplay" class="input-field" style="font-family: monospace; font-size: 11px; padding: 4px; margin: 4px 0;" /><br>
+          <strong>Max Pages:</strong> <span id="maxPagesDisplay">5</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickPagination" class="btn btn-primary">Pick Next Button</button>
+          <button id="btnClearPagination" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">List-Detail Mode</div>
+        <div class="section-description">
+          Enable this if you need to click into detail pages (e.g., product pages from a listing).
+        </div>
+
+        <div id="linkStatus" class="info-box info hidden">
+          <strong>Link Selector:</strong> <input type="text" id="linkSelectorDisplay" class="input-field" style="font-family: monospace; font-size: 11px; padding: 4px; margin: 4px 0;" /><br>
+          <strong>Links found:</strong> <span id="linkCountDisplay">0</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnPickLink" class="btn btn-primary">Pick Detail Link</button>
+          <button id="btnClearLink" class="btn btn-secondary">Clear</button>
+        </div>
+      </div>
+
+      <div class="btn-group mt-2">
+        <button id="btnBackToFields" class="btn btn-secondary">Back</button>
+        <button id="btnNextToExport" class="btn btn-primary">Continue to Export</button>
+      </div>
+    </div>
+
+    <!-- Step 5: Export -->
+    <div id="step-export" class="wizard-content hidden">
+      <div class="section">
+        <div class="section-title">Configuration Summary</div>
+        <div id="exportSummary" class="config-summary">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Actions</div>
+        <button id="btnTestAll" class="btn btn-secondary btn-block">Test All Selectors</button>
+        <button id="btnExport" class="btn btn-primary btn-block mt-1">Export Configuration</button>
+        <button id="btnStartCrawl" class="btn btn-success btn-block mt-1">Start Crawl</button>
+        <button id="btnClearAll" class="btn btn-danger btn-block mt-1">Clear All</button>
+      </div>
+
+      <button id="btnBackToAdvanced" class="btn btn-secondary btn-block mt-2">Back</button>
+    </div>
+  </div>
+</div>
+
+  <script src="config-manager.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

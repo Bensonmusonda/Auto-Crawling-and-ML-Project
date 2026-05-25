@@ -27,18 +27,28 @@ celery_app = Celery(
 )
 
 def fetch_dataset(dataset_name, source="db", owner_id=None):
-    """Connects to Postgres to get raw scraped data or reads CSV if source == 'csv'"""
     if source == "csv":
         user_dir = get_user_dataset_dir(owner_id)
-        # Check user dir first
         csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
         if not os.path.exists(csv_path):
-            # Fallback to admin/shared if not found in user dir
-            admin_dir = get_user_dataset_dir(1)
-            csv_path = os.path.join(admin_dir, f"{dataset_name}.csv")
-            
+            # Look up actual admin ID instead of assuming 1
+            try:
+                with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id FROM users WHERE is_admin = TRUE ORDER BY id LIMIT 1")
+                        row = cur.fetchone()
+                        admin_id = row["id"] if row else None
+            except Exception:
+                admin_id = None
+
+            if admin_id and admin_id != owner_id:
+                admin_dir = get_user_dataset_dir(admin_id)
+                csv_path = os.path.join(admin_dir, f"{dataset_name}.csv")
+
         if os.path.exists(csv_path):
             return pd.read_csv(csv_path)
+
+        return None  # Don't silently fall through to DB
 
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
@@ -94,17 +104,28 @@ def run_ml_pipeline(self, dataset_name, pipeline_config, source="csv", **kwargs)
     }))
 
     try:
-        raw_data = fetch_dataset(dataset_name, source=source)
-        if raw_data is None or (isinstance(raw_data, list) and not raw_data) or (isinstance(raw_data, pd.DataFrame) and raw_data.empty):
-            raise ValueError("Dataset empty or not found")
+        # Resolve owner_id FIRST
+        owner_id = kwargs.get('owner_id') or self.request.kwargs.get('owner_id')
+
+        raw_data = fetch_dataset(dataset_name, source=source, owner_id=owner_id)
+
+        if raw_data is None \
+                or (isinstance(raw_data, list) and not raw_data) \
+                or (isinstance(raw_data, pd.DataFrame) and raw_data.empty):
+            user_dir = get_user_dataset_dir(owner_id)
+            csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
+            raise ValueError(
+                f"Dataset '{dataset_name}' not found. "
+                f"Looked for CSV at: {csv_path}. "
+                f"owner_id={owner_id!r}."
+            )
 
         engine = UniversalEngine(raw_data)
         processed_df, logs = engine.run_pipeline(pipeline_config)
 
-        owner_id = kwargs.get('owner_id') or self.request.kwargs.get('owner_id')
+        # owner_id already resolved — don't extract again below
         archive_processed_data(processed_df, dataset_name, pipeline_config, owner_id=owner_id)
 
-        # ── Save CSV to Scoped Directory ──────────────────────────
         user_dir = get_user_dataset_dir(owner_id)
         csv_path = os.path.join(user_dir, f"{dataset_name}.csv")
         processed_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
