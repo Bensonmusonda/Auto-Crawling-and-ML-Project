@@ -117,8 +117,11 @@ class LogisticRegressionStrategy(ModelStrategy):
         }
     
     def get_feature_importance(self, model, feature_names: list) -> Dict[str, float]:
-        # For logistic regression, use coefficient magnitudes
+        # For logistic regression, use coefficient magnitudes normalized to sum to 1
         coef = np.abs(model.coef_[0]) if len(model.coef_.shape) == 2 else np.abs(model.coef_)
+        coef_sum = np.sum(coef)
+        if coef_sum > 0:
+            coef = coef / coef_sum
         return {
             name: float(importance)
             for name, importance in sorted(
@@ -235,6 +238,9 @@ class LinearRegressionStrategy(ModelStrategy):
     
     def get_feature_importance(self, model, feature_names: list) -> Dict[str, float]:
         coef = np.abs(model.coef_)
+        coef_sum = np.sum(coef)
+        if coef_sum > 0:
+            coef = coef / coef_sum
         return {
             name: float(importance)
             for name, importance in sorted(
@@ -276,6 +282,9 @@ class RidgeRegressionStrategy(ModelStrategy):
     
     def get_feature_importance(self, model, feature_names: list) -> Dict[str, float]:
         coef = np.abs(model.coef_)
+        coef_sum = np.sum(coef)
+        if coef_sum > 0:
+            coef = coef / coef_sum
         return {
             name: float(importance)
             for name, importance in sorted(

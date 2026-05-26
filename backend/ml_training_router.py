@@ -263,12 +263,13 @@ async def get_model_details(job_id: str):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT 
-                        job_id, model_type, task_type, metrics,
-                        feature_importance, hyperparameters, model_path,
-                        n_samples_train, n_samples_test, n_features, feature_names,
-                        target_column, source_csv, created_at
-                    FROM model_registry
-                    WHERE job_id = %s
+                        m.job_id, m.model_type, m.task_type, m.metrics,
+                        m.feature_importance, m.hyperparameters, m.model_path,
+                        m.n_samples_train, m.n_samples_test, m.n_features, m.feature_names,
+                        m.target_column, m.source_csv, m.created_at, u.username as owner_username
+                    FROM model_registry m
+                    LEFT JOIN users u ON m.owner_id = u.id
+                    WHERE m.job_id = %s
                 """, (job_id,))
                 
                 model = cur.fetchone()
@@ -290,6 +291,7 @@ async def get_model_details(job_id: str):
                     "feature_names": model["feature_names"],
                     "target_column": model["target_column"],
                     "source_csv": model["source_csv"],
+                    "owner_username": model["owner_username"],
                     "created_at": model["created_at"].isoformat()
                 }
     except HTTPException:

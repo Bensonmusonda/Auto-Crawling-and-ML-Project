@@ -121,14 +121,6 @@ async def create_workflow_from_past_runs(
             # 2. Fetch Process Config
             proc_id = stages_to_include.get("process_job_id")
             if proc_id:
-                await cur.execute("""
-                    CREATE TABLE IF NOT EXISTS processing_jobs (
-                        job_id VARCHAR(255) PRIMARY KEY,
-                        dataset_name VARCHAR(255),
-                        config JSONB,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
                 await cur.execute(
                     "SELECT config FROM processing_jobs WHERE job_id = %s", (proc_id,)
                 )
@@ -137,7 +129,21 @@ async def create_workflow_from_past_runs(
                     stages["processing"]["enabled"] = True
                     stages["processing"]["config"]["steps"] = row["config"]
                 else:
-                    raise HTTPException(404, f"Processing job {proc_id} not found")
+                    # Fallback to querying processed_items using representative ID
+                    try:
+                        proc_id_int = int(proc_id)
+                        await cur.execute("""
+                            SELECT operations_applied FROM processed_items WHERE id = %s
+                        """, (proc_id_int,))
+                        row = await cur.fetchone()
+                        if row:
+                            stages["processing"]["enabled"] = True
+                            stages["processing"]["config"]["steps"] = row["operations_applied"]
+                        else:
+                            raise HTTPException(404, f"Processing job {proc_id} not found")
+                    except ValueError:
+                        raise HTTPException(404, f"Processing job {proc_id} not found")
+
 
             # 3. Fetch Train Config
             train_id = stages_to_include.get("train_job_id")
@@ -198,6 +204,87 @@ async def list_workflows(
                 ORDER BY w.created_at DESC
             """, bind_vals)
             return await cur.fetchall()
+
+
+# ── IMPORTANT: These specific-path routes MUST be registered before
+# ── the /{workflow_id} wildcard, otherwise FastAPI will match the
+# ── wildcard first and treat "configs" / "runs" as integer IDs.
+@router.get("/configs/process/{dataset_name}")
+async def get_workflow_processing_configs(
+    dataset_name: str,
+    user: Optional[dict] = Depends(get_optional_user),
+):
+    """
+    Safely retrieve past processing configs from processed_items
+    grouped by operations to support workflow creation.
+    """
+    if not user:
+        return []
+
+    is_admin = user.get("is_admin", False)
+
+    if is_admin:
+        owner_filter = "TRUE"
+        params = [dataset_name]
+    else:
+        owner_filter = "(owner_id = %s OR owner_id = 1)"
+        params = [dataset_name, user["id"]]
+
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(f"""
+                SELECT
+                    MIN(id)               AS job_id,
+                    source_dataset        AS dataset_name,
+                    operations_applied    AS config,
+                    MAX(processed_at)     AS created_at
+                FROM processed_items
+                WHERE source_dataset = %s AND {owner_filter}
+                GROUP BY source_dataset, operations_applied
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, params)
+            rows = await cur.fetchall()
+
+    results = []
+    for row in rows:
+        cfg = row["config"]
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except Exception:
+                cfg = []
+        results.append({
+            "job_id":       str(row["job_id"]),
+            "dataset_name": row["dataset_name"],
+            "config":       cfg if isinstance(cfg, list) else [],
+            "created_at":   row["created_at"].isoformat() if row["created_at"] else None,
+        })
+    return results
+
+
+@router.get("/runs/{run_id}/stage-logs/{stage}")
+async def get_stage_logs(run_id: str, stage: str):
+    """Return all logs for a specific workflow run and stage."""
+    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT level, message, timestamp
+                FROM workflow_logs
+                WHERE run_id = %s AND stage = %s
+                ORDER BY timestamp ASC
+            """, (run_id, stage))
+            rows = await cur.fetchall()
+
+    logs = [
+        {
+            "level":     row["level"],
+            "message":   row["message"],
+            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+        }
+        for row in rows
+    ]
+    return {"logs": logs}
 
 
 @router.get("/{workflow_id}")
@@ -357,25 +444,4 @@ async def get_workflow_history(
     return result
 
 
-@router.get("/runs/{run_id}/stage-logs/{stage}")
-async def get_stage_logs(run_id: str, stage: str):
-    """Return all logs for a specific workflow run and stage."""
-    async with await psycopg.AsyncConnection.connect(DATABASE_URL, row_factory=dict_row) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("""
-                SELECT level, message, timestamp
-                FROM workflow_logs
-                WHERE run_id = %s AND stage = %s
-                ORDER BY timestamp ASC
-            """, (run_id, stage))
-            rows = await cur.fetchall()
 
-    logs = []
-    for row in rows:
-        logs.append({
-            "level":     row["level"],
-            "message":   row["message"],
-            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
-        })
-
-    return {"logs": logs}

@@ -68,6 +68,8 @@ class ModelMetricsResponse(BaseModel):
     n_features: int
     feature_names: Optional[List[str]] = None      
     target_column: Optional[str] = None
+    source_csv: Optional[str] = None
+    owner_username: Optional[str] = None
     created_at: str
 
 

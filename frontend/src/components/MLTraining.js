@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import CsvDatasetPicker from './CsvDatasetPicker';
 import PredictionTester from './PredictionTester';
+import ModelApiDocs from './ModelApiDocs';
 
 const OwnershipBadge = ({ ownerUsername }) => {
     if (!ownerUsername) return null;
@@ -333,7 +334,7 @@ export default function MLTraining() {
     const getMetricsChartData = (metrics) => {
         if (!metrics) return [];
         return Object.entries(metrics)
-            .filter(([, v]) => typeof v === 'number')
+            .filter(([key, v]) => typeof v === 'number' && key !== 'mse')
             .map(([key, value]) => ({
                 name: key.replace(/_/g, ' '),
                 value: Math.abs(value),
@@ -851,6 +852,7 @@ export default function MLTraining() {
                                 </div>
                             )}
                             <PredictionTester model={detailModel} />
+                            <ModelApiDocs model={detailModel} />
                         </>
                     )}
                 </div>

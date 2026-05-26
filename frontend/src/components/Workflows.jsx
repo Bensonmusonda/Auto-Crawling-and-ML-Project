@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Play, Plus, Trash2, Edit2, CheckCircle, XCircle, ChevronDown, ChevronUp, Activity, History
+    Play, Plus, Trash2, Edit2, CheckCircle, XCircle, ChevronDown, ChevronUp, Activity, History, Sparkles, Info
 } from 'lucide-react';
 import WorkflowDetail from './WorkflowDetail';
 
@@ -84,19 +84,18 @@ export default function Workflows({ wsEvents = [] }) {
     const [expandedStage, setExpandedStage] = useState('crawl');
     const [saving, setSaving] = useState(false);
 
+    // Past-run config loaders (unified — used inside the builder for all stages)
     const [crawlConfigs, setCrawlConfigs] = useState([]);
-    const [loadingConfigs, setLoadingConfigs] = useState(false);
-    const [availableDatasets, setAvailableDatasets] = useState([]);
-
-    // Stitcher state
-    const [showStitcher, setShowStitcher] = useState(false);
-    const [stitchDataset, setStitchDataset] = useState('');
-    const [stitchName, setStitchName] = useState('');
     const [procConfigs, setProcConfigs] = useState([]);
-    const [loadingProcConfigs, setLoadingProcConfigs] = useState(false);
     const [trainConfigs, setTrainConfigs] = useState([]);
+    const [loadingConfigs, setLoadingConfigs] = useState(false);
+    const [loadingProcConfigs, setLoadingProcConfigs] = useState(false);
     const [loadingTrainConfigs, setLoadingTrainConfigs] = useState(false);
-    const [stitchStages, setStitchStages] = useState({ crawl_job_id: '', process_job_id: '', train_job_id: '' });
+    // Which stages had a past-run config loaded (for visual confirmation)
+    const [loadedStages, setLoadedStages] = useState({});
+
+    const [availableDatasets, setAvailableDatasets] = useState([]);
+    const [csvDatasets, setCsvDatasets] = useState([]);
 
     // Detail view — which workflow is "drilled in"
     const [selectedWorkflow, setSelectedWorkflow] = useState(null);
@@ -109,15 +108,19 @@ export default function Workflows({ wsEvents = [] }) {
     useEffect(() => {
         fetchWorkflows();
         
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        
         // Fetch all datasets for dropdown hints
-        fetch(`${API_BASE}/api/datasets/list`)
+        fetch(`${API_BASE}/api/datasets/list`, { headers })
             .then(res => res.json())
             .then(data => {
                 const names = data.map(d => d.source_dataset || d.dataset_name).filter(Boolean);
                 // Also fetch csv-list as backup combinations
-                fetch(`${API_BASE}/api/datasets/csv-list`)
+                fetch(`${API_BASE}/api/datasets/csv-list`, { headers })
                     .then(resCSV => resCSV.json())
                     .then(dataCSV => {
+                        setCsvDatasets(dataCSV);
                         const csvNames = dataCSV.map(d => d.name);
                         setAvailableDatasets(Array.from(new Set([...names, ...csvNames])));
                     })
@@ -156,11 +159,35 @@ export default function Workflows({ wsEvents = [] }) {
 
     const [workflowColumns, setWorkflowColumns] = useState([]);
 
-    // Add this function:
     const fetchWorkflowColumns = async (datasetName) => {
-        const path = `/app/datasets/${datasetName}.csv`;
+        if (!datasetName) return;
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+        let path = '';
+        const found = csvDatasets.find(d => d.name === datasetName);
+        if (found) {
+            path = found.path;
+        } else {
+            // fallback: refetch the list to see if it was saved recently
+            try {
+                const res = await fetch(`${API_BASE}/api/datasets/csv-list`, { headers });
+                const list = await res.json();
+                setCsvDatasets(list);
+                const match = list.find(d => d.name === datasetName);
+                if (match) {
+                    path = match.path;
+                }
+            } catch (_) {}
+        }
+
+        if (!path) {
+            // fallback path if still not found
+            path = `/app/datasets/${datasetName}.csv`;
+        }
+
         try {
-            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`);
+            const res = await fetch(`${API_BASE}/api/datasets/csv-columns?path=${encodeURIComponent(path)}`, { headers });
             const data = await res.json();
             setWorkflowColumns(data.columns || []);
         } catch (_) {
@@ -176,7 +203,9 @@ export default function Workflows({ wsEvents = [] }) {
         }
         setHistoryState(prev => ({ ...prev, [wfId]: { open: true, loading: true, runs: [] } }));
         try {
-            const res = await fetch(`${API_BASE}/api/workflows/${wfId}/history?limit=5`);
+            const token = localStorage.getItem('auth_token');
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const res = await fetch(`${API_BASE}/api/workflows/${wfId}/history?limit=5`, { headers });
             const data = await res.json();
             setHistoryState(prev => ({ ...prev, [wfId]: { open: true, loading: false, runs: data } }));
         } catch (_) {
@@ -184,44 +213,30 @@ export default function Workflows({ wsEvents = [] }) {
         }
     };
 
-    const fetchCrawlConfigs = async (datasetName) => {
+    const fetchAllStageConfigs = async (datasetName) => {
         if (!datasetName) return;
+        // Fetch all three stage configs in parallel
         setLoadingConfigs(true);
-        try {
-            const res = await fetch(`${API_BASE}/api/crawl/configs/${datasetName}`);
-            const data = await res.json();
-            setCrawlConfigs(Array.isArray(data) ? data : []);
-        } catch (_) {
-            setCrawlConfigs([]);
-        } finally {
-            setLoadingConfigs(false);
-        }
-    };
-
-    const fetchProcConfigs = async (datasetName) => {
-        if (!datasetName) return;
         setLoadingProcConfigs(true);
-        try {
-            const res = await fetch(`${API_BASE}/api/process/configs/${datasetName}`);
-            const data = await res.json();
-            setProcConfigs(Array.isArray(data) ? data : []);
-        } catch (_) {
-            setProcConfigs([]);
-        } finally {
-            setLoadingProcConfigs(false);
-        }
-    };
-
-    const fetchTrainConfigs = async (datasetName) => {
-        if (!datasetName) return;
         setLoadingTrainConfigs(true);
         try {
-            const res = await fetch(`${API_BASE}/api/ml-training/configs/${datasetName}`);
-            const data = await res.json();
-            setTrainConfigs(Array.isArray(data) ? data : []);
+            const token = localStorage.getItem('auth_token');
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const [crawlRes, procRes, trainRes] = await Promise.allSettled([
+                fetch(`${API_BASE}/api/crawl/configs/${datasetName}`, { headers }).then(r => r.json()),
+                fetch(`${API_BASE}/api/workflows/configs/process/${datasetName}`, { headers }).then(r => r.json()),
+                fetch(`${API_BASE}/api/ml-training/configs/${datasetName}`, { headers }).then(r => r.json()),
+            ]);
+            setCrawlConfigs(crawlRes.status === 'fulfilled' && Array.isArray(crawlRes.value) ? crawlRes.value : []);
+            setProcConfigs(procRes.status === 'fulfilled' && Array.isArray(procRes.value) ? procRes.value : []);
+            setTrainConfigs(trainRes.status === 'fulfilled' && Array.isArray(trainRes.value) ? trainRes.value : []);
         } catch (_) {
+            setCrawlConfigs([]);
+            setProcConfigs([]);
             setTrainConfigs([]);
         } finally {
+            setLoadingConfigs(false);
+            setLoadingProcConfigs(false);
             setLoadingTrainConfigs(false);
         }
     };
@@ -246,6 +261,7 @@ export default function Workflows({ wsEvents = [] }) {
                 }
             }
         }));
+        setLoadedStages(prev => ({ ...prev, crawl: new Date(found.created_at).toLocaleString() }));
     };
 
     const loadProcConfig = (jobId) => {
@@ -255,6 +271,7 @@ export default function Workflows({ wsEvents = [] }) {
             ...prev,
             processing: { ...prev.processing, config: { steps: found.config || [] } }
         }));
+        setLoadedStages(prev => ({ ...prev, processing: new Date(found.created_at).toLocaleString() }));
     };
 
     const loadTrainConfig = (jobId) => {
@@ -268,16 +285,20 @@ export default function Workflows({ wsEvents = [] }) {
                 config: {
                     model_type: config.model_type || 'random_forest',
                     target_column: config.target_column || '',
-                    auto_tune: !!config.auto_tune
+                    auto_tune: config.auto_tune !== undefined ? !!config.auto_tune : true,
+                    params: config.params || {},
                 }
             }
         }));
+        setLoadedStages(prev => ({ ...prev, ml: new Date(found.created_at).toLocaleString() }));
     };
 
     const fetchWorkflows = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/api/workflows`);
+            const token = localStorage.getItem('auth_token');
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const res = await fetch(`${API_BASE}/api/workflows`, { headers });
             const data = await res.json();
             setWorkflows(data);
 
@@ -302,19 +323,22 @@ export default function Workflows({ wsEvents = [] }) {
 
     const openBuilder = (workflow = null) => {
         setSelectedWorkflow(null); // close detail view when editing
+        setLoadedStages({});
         if (workflow) {
             setEditingWorkflow(workflow);
             setWfName(workflow.name);
             setWfDataset(workflow.dataset_name);
             setStages(workflow.stages);
             fetchWorkflowColumns(workflow.dataset_name);
-            fetchCrawlConfigs(workflow.dataset_name);  // add this
+            fetchAllStageConfigs(workflow.dataset_name);
         } else {
             setEditingWorkflow(null);
             setWfName('');
             setWfDataset('');
             setStages(emptyStages());
             setCrawlConfigs([]);
+            setProcConfigs([]);
+            setTrainConfigs([]);
             setWorkflowColumns([]);
         }
         setExpandedStage('crawl');
@@ -341,9 +365,15 @@ export default function Workflows({ wsEvents = [] }) {
                 : `${API_BASE}/api/workflows`;
             const method = editingWorkflow ? 'PUT' : 'POST';
 
+            const token = localStorage.getItem('auth_token');
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
+            };
+
             await fetch(url, {
                 method,
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify(payload),
             });
             setShowBuilder(false);
@@ -352,36 +382,13 @@ export default function Workflows({ wsEvents = [] }) {
         finally { setSaving(false); }
     };
 
-    const stitchWorkflow = async () => {
-        if (!stitchName.trim() || !stitchDataset.trim()) return;
-        setSaving(true);
-        try {
-            const payload = {
-                name: stitchName,
-                dataset_name: stitchDataset,
-                stages_to_include: {}
-            };
-            if (stitchStages.crawl_job_id) payload.stages_to_include.crawl_job_id = stitchStages.crawl_job_id;
-            if (stitchStages.process_job_id) payload.stages_to_include.process_job_id = stitchStages.process_job_id;
-            if (stitchStages.train_job_id) payload.stages_to_include.train_job_id = stitchStages.train_job_id;
-            
-            await fetch(`${API_BASE}/api/workflows/from-past-runs`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            setShowStitcher(false);
-            setStitchName('');
-            setStitchDataset('');
-            setStitchStages({ crawl_job_id: '', process_job_id: '', train_job_id: '' });
-            fetchWorkflows();
-        } catch (_) {}
-        finally { setSaving(false); }
-    };
+    // (stitchWorkflow removed — stitching is now done inside the builder directly)
 
     const deleteWorkflow = async (id) => {
         if (!window.confirm('Delete this workflow?')) return;
-        await fetch(`${API_BASE}/api/workflows/${id}`, { method: 'DELETE' });
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        await fetch(`${API_BASE}/api/workflows/${id}`, { method: 'DELETE', headers });
         if (selectedWorkflow?.id === id) setSelectedWorkflow(null);
         fetchWorkflows();
     };
@@ -389,7 +396,9 @@ export default function Workflows({ wsEvents = [] }) {
     const runWorkflow = async (id) => {
         setRunningWorkflows(prev => ({ ...prev, [id]: { status: 'running', stage: null, message: 'Submitting…' } }));
         try {
-            await fetch(`${API_BASE}/api/workflows/${id}/run`, { method: 'POST' });
+            const token = localStorage.getItem('auth_token');
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            await fetch(`${API_BASE}/api/workflows/${id}/run`, { method: 'POST', headers });
         } catch (e) {
             setRunningWorkflows(prev => ({ ...prev, [id]: { status: 'failed', error: e.message } }));
         }
@@ -469,16 +478,7 @@ export default function Workflows({ wsEvents = [] }) {
                     <p className="page-description">Saved end-to-end pipelines — crawl, process, and train in one click</p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                    <button className="btn btn-secondary" onClick={() => {
-                        setShowStitcher(true);
-                        setShowBuilder(false);
-                    }}>
-                        <History size={14} /> Create from Past Runs
-                    </button>
-                    <button className="btn btn-primary" onClick={() => {
-                        openBuilder();
-                        setShowStitcher(false);
-                    }}>
+                    <button className="btn btn-primary" onClick={() => openBuilder()}>
                         <Plus size={14} /> New Workflow
                     </button>
                 </div>
@@ -488,107 +488,6 @@ export default function Workflows({ wsEvents = [] }) {
             <datalist id="available-datasets">
                 {availableDatasets.map(d => <option key={d} value={d} />)}
             </datalist>
-
-            {/* ── Stitcher Builder ── */}
-            {showStitcher && (
-                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-                    <div className="card-header">
-                        <span className="card-title">Create Workflow from Past Runs</span>
-                        <button className="btn btn-secondary btn-sm"
-                            onClick={() => setShowStitcher(false)}>
-                            Cancel
-                        </button>
-                    </div>
-                    <div className="card-body">
-                        <div className="grid-2" style={{ marginBottom: 'var(--space-md)' }}>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
-                                <label className="form-label">Workflow Name</label>
-                                <input className="form-input" value={stitchName}
-                                    onChange={e => setStitchName(e.target.value)}
-                                    placeholder="e.g. Nightly Ecommerce Pipeline" />
-                            </div>
-                            <div className="form-group" style={{ marginBottom: 0 }}>
-                                <label className="form-label">Dataset Name</label>
-                                <input className="form-input" value={stitchDataset}
-                                    list="available-datasets"
-                                    onChange={e => {
-                                        setStitchDataset(e.target.value);
-                                        setCrawlConfigs([]);
-                                        setProcConfigs([]);
-                                        setTrainConfigs([]);
-                                        setStitchStages({ crawl_job_id: '', process_job_id: '', train_job_id: '' });
-                                        if (e.target.value) {
-                                            fetchCrawlConfigs(e.target.value);
-                                            fetchProcConfigs(e.target.value);
-                                            fetchTrainConfigs(e.target.value);
-                                        }
-                                    }}
-                                    placeholder="Select or type dataset..." />
-                            </div>
-                        </div>
-
-                        {stitchDataset && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                                <div className="card" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-light)' }}>
-                                    <div className="card-body">
-                                        <div className="form-group" style={{ marginBottom: 0 }}>
-                                            <label className="form-label">Crawl Stage (Optional)</label>
-                                            <select className="form-select" value={stitchStages.crawl_job_id || ''} onChange={e => setStitchStages({...stitchStages, crawl_job_id: e.target.value})} style={{ padding: '4px 8px', fontSize: 12 }}>
-                                                <option value="">-- Skip Crawl Stage --</option>
-                                                {Array.isArray(crawlConfigs) && crawlConfigs.map(c => (
-                                                    <option key={c.job_id} value={c.job_id}>
-                                                        {new Date(c.created_at).toLocaleString()} (Job: {c.job_id.substring(0,8)})
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {loadingConfigs && <div style={{ fontSize: 11, marginTop: 4 }}>Loading...</div>}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="card" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-light)' }}>
-                                    <div className="card-body">
-                                        <div className="form-group" style={{ marginBottom: 0 }}>
-                                            <label className="form-label">Processing Stage (Optional)</label>
-                                            <select className="form-select" value={stitchStages.process_job_id || ''} onChange={e => setStitchStages({...stitchStages, process_job_id: e.target.value})} style={{ padding: '4px 8px', fontSize: 12 }}>
-                                                <option value="">-- Skip Processing Stage --</option>
-                                                {Array.isArray(procConfigs) && procConfigs.map(c => (
-                                                    <option key={c.job_id} value={c.job_id}>
-                                                        {new Date(c.created_at).toLocaleString()} ({c.config?.length || 0} steps)
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {loadingProcConfigs && <div style={{ fontSize: 11, marginTop: 4 }}>Loading...</div>}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="card" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-light)' }}>
-                                    <div className="card-body">
-                                        <div className="form-group" style={{ marginBottom: 0 }}>
-                                            <label className="form-label">ML Training Stage (Optional)</label>
-                                            <select className="form-select" value={stitchStages.train_job_id || ''} onChange={e => setStitchStages({...stitchStages, train_job_id: e.target.value})} style={{ padding: '4px 8px', fontSize: 12 }}>
-                                                <option value="">-- Skip Training Stage --</option>
-                                                {Array.isArray(trainConfigs) && trainConfigs.map(c => (
-                                                    <option key={c.job_id} value={c.job_id}>
-                                                        {new Date(c.created_at).toLocaleString()} (Model: {c.config?.model_type})
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {loadingTrainConfigs && <div style={{ fontSize: 11, marginTop: 4 }}>Loading...</div>}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <button className="btn btn-primary"
-                            onClick={stitchWorkflow}
-                            disabled={saving || !stitchName.trim() || !stitchDataset.trim() || (!stitchStages.crawl_job_id && !stitchStages.process_job_id && !stitchStages.train_job_id)}
-                            style={{ marginTop: 'var(--space-md)' }}>
-                            {saving ? <><span className="spinner" /> Saving…</> : 'Save Workflow'}
-                        </button>
-                    </div>
-                </div>
-            )}
 
             {/* ── Workflow Builder ── */}
             {showBuilder && (
@@ -604,6 +503,23 @@ export default function Workflows({ wsEvents = [] }) {
                     </div>
                     <div className="card-body">
                         {/* Name + Dataset */}
+                        {/* Hint banner: past-run configs available */}
+                        <div style={{
+                            marginBottom: 'var(--space-md)',
+                            padding: '10px 14px',
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(79,70,229,0.06)',
+                            border: '1px solid rgba(79,70,229,0.18)',
+                            display: 'flex', alignItems: 'flex-start', gap: 8,
+                            fontSize: 12, color: 'var(--text-secondary)'
+                        }}>
+                            <Sparkles size={14} style={{ color: 'var(--color-primary)', flexShrink: 0, marginTop: 1 }} />
+                            <span>
+                                <strong style={{ color: 'var(--color-primary)' }}>Flexible Builder</strong> — each stage can be
+                                pre-filled from a previous run or configured from scratch. Mix and match freely!
+                            </span>
+                        </div>
+
                         <div className="grid-2" style={{ marginBottom: 'var(--space-md)' }}>
                             <div className="form-group" style={{ marginBottom: 0 }}>
                                 <label className="form-label">Workflow Name</label>
@@ -619,9 +535,12 @@ export default function Workflows({ wsEvents = [] }) {
                                         setWfDataset(e.target.value);
                                         setWorkflowColumns([]);
                                         setCrawlConfigs([]);
+                                        setProcConfigs([]);
+                                        setTrainConfigs([]);
+                                        setLoadedStages({});
                                         if (e.target.value) {
                                             fetchWorkflowColumns(e.target.value);
-                                            fetchCrawlConfigs(e.target.value);
+                                            fetchAllStageConfigs(e.target.value);
                                         }
                                     }}
                                     placeholder="Select or type new dataset..." />
@@ -662,17 +581,35 @@ export default function Workflows({ wsEvents = [] }) {
                                         {/* ── Crawl config ── */}
                                         {stageName === 'crawl' && (
                                             <div>
+                                                {/* Loaded confirmation banner */}
+                                                {loadedStages.crawl && (
+                                                    <div style={{
+                                                        marginBottom: 'var(--space-sm)',
+                                                        padding: '7px 12px',
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        background: 'rgba(22,163,74,0.08)',
+                                                        border: '1px solid rgba(22,163,74,0.25)',
+                                                        display: 'flex', alignItems: 'center', gap: 6,
+                                                        fontSize: 11, color: 'var(--color-success)'
+                                                    }}>
+                                                        <CheckCircle size={12} />
+                                                        Loaded from past run ({loadedStages.crawl}). Tweak any field below.
+                                                    </div>
+                                                )}
                                                 {/* Config loader */}
-                                                {crawlConfigs.length > 0 && (
+                                                {(crawlConfigs.length > 0 || loadingConfigs) && (
                                                     <div className="form-group">
-                                                        <label className="form-label">Load from previous crawl</label>
+                                                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                                            <History size={11} /> Load from previous crawl
+                                                            {loadingConfigs && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 10 }}>Loading…</span>}
+                                                        </label>
                                                         <select
                                                             className="form-select"
                                                             defaultValue=""
                                                             onChange={e => { if (e.target.value) loadCrawlConfig(e.target.value); }}
                                                             style={{ padding: '4px 8px', fontSize: 12 }}
                                                         >
-                                                            <option value="" disabled>Select a previous run…</option>
+                                                            <option value="" disabled>Select a previous run to pre-fill…</option>
                                                             {crawlConfigs.map(c => (
                                                                 <option key={c.job_id} value={c.job_id}>
                                                                     {new Date(c.created_at).toLocaleString()} — {c.job_id.substring(0, 8)}…
@@ -809,17 +746,35 @@ export default function Workflows({ wsEvents = [] }) {
                                         {/* ── Processing config ── */}
                                         {stageName === 'processing' && (
                                             <div>
+                                                {/* Loaded confirmation banner */}
+                                                {loadedStages.processing && (
+                                                    <div style={{
+                                                        marginBottom: 'var(--space-sm)',
+                                                        padding: '7px 12px',
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        background: 'rgba(22,163,74,0.08)',
+                                                        border: '1px solid rgba(22,163,74,0.25)',
+                                                        display: 'flex', alignItems: 'center', gap: 6,
+                                                        fontSize: 11, color: 'var(--color-success)'
+                                                    }}>
+                                                        <CheckCircle size={12} />
+                                                        Loaded from past run ({loadedStages.processing}). Add, remove or reorder steps below.
+                                                    </div>
+                                                )}
                                                 {/* Config loader for Processing */}
-                                                {Array.isArray(procConfigs) && procConfigs.length > 0 && (
+                                                {(Array.isArray(procConfigs) && procConfigs.length > 0) || loadingProcConfigs ? (
                                                     <div className="form-group">
-                                                        <label className="form-label">Load from previous run</label>
+                                                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                                            <History size={11} /> Load from previous run
+                                                            {loadingProcConfigs && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 10 }}>Loading…</span>}
+                                                        </label>
                                                         <select
                                                             className="form-select"
                                                             defaultValue=""
                                                             onChange={e => { if (e.target.value) loadProcConfig(e.target.value); }}
                                                             style={{ padding: '4px 8px', fontSize: 12, marginBottom: 'var(--space-sm)' }}
                                                         >
-                                                            <option value="" disabled>Select a previous run…</option>
+                                                            <option value="" disabled>Select a previous run to pre-fill steps…</option>
                                                             {procConfigs.map(c => (
                                                                 <option key={c.job_id} value={c.job_id}>
                                                                     {new Date(c.created_at).toLocaleString()} — {c.config?.length || 0} steps
@@ -827,7 +782,11 @@ export default function Workflows({ wsEvents = [] }) {
                                                             ))}
                                                         </select>
                                                     </div>
-                                                )}
+                                                ) : wfDataset ? (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginBottom: 'var(--space-sm)', padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
+                                                        <Info size={11} /> No previous processing runs found for this dataset — configure steps manually below.
+                                                    </div>
+                                                ) : null}
                                                 {stages.processing.config.steps.length === 0 ? (
                                                     <div className="empty-state" style={{ padding: 'var(--space-md)' }}>
                                                         <div className="empty-state-text">No steps added</div>
@@ -884,25 +843,47 @@ export default function Workflows({ wsEvents = [] }) {
                                         {/* ── ML config ── */}
                                         {stageName === 'ml' && (
                                             <div>
+                                                {/* Loaded confirmation banner */}
+                                                {loadedStages.ml && (
+                                                    <div style={{
+                                                        marginBottom: 'var(--space-sm)',
+                                                        padding: '7px 12px',
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        background: 'rgba(22,163,74,0.08)',
+                                                        border: '1px solid rgba(22,163,74,0.25)',
+                                                        display: 'flex', alignItems: 'center', gap: 6,
+                                                        fontSize: 11, color: 'var(--color-success)'
+                                                    }}>
+                                                        <CheckCircle size={12} />
+                                                        Loaded from past run ({loadedStages.ml}). Adjust model or target column below.
+                                                    </div>
+                                                )}
                                                 {/* Config loader for ML */}
-                                                {Array.isArray(trainConfigs) && trainConfigs.length > 0 && (
+                                                {(Array.isArray(trainConfigs) && trainConfigs.length > 0) || loadingTrainConfigs ? (
                                                     <div className="form-group">
-                                                        <label className="form-label">Load from previous run</label>
+                                                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                                            <History size={11} /> Load from previous run
+                                                            {loadingTrainConfigs && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 10 }}>Loading…</span>}
+                                                        </label>
                                                         <select
                                                             className="form-select"
                                                             defaultValue=""
                                                             onChange={e => { if (e.target.value) loadTrainConfig(e.target.value); }}
                                                             style={{ padding: '4px 8px', fontSize: 12, marginBottom: 'var(--space-sm)' }}
                                                         >
-                                                            <option value="" disabled>Select a previous run…</option>
+                                                            <option value="" disabled>Select a previous run to pre-fill…</option>
                                                             {trainConfigs.map(c => (
                                                                 <option key={c.job_id} value={c.job_id}>
-                                                                    {new Date(c.created_at).toLocaleString()} — Model: {c.config?.model_type}
+                                                                    {new Date(c.created_at).toLocaleString()} — {c.config?.model_type?.replace(/_/g,' ')} → {c.config?.target_column}
                                                                 </option>
                                                             ))}
                                                         </select>
                                                     </div>
-                                                )}
+                                                ) : wfDataset ? (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginBottom: 'var(--space-sm)', padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
+                                                        <Info size={11} /> No previous ML training runs found for this dataset — configure manually below.
+                                                    </div>
+                                                ) : null}
                                                 <div className="form-group">
                                                     <label className="form-label">Target Column</label>
                                                     {workflowColumns.length > 0 ? (
