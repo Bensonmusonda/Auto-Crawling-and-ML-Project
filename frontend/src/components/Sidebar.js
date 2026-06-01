@@ -1,8 +1,9 @@
 import React from 'react';
-import { Database, Wrench, Brain, Activity, GitBranch, BookOpen, LogOut, User } from 'lucide-react';
+import { Database, Wrench, Brain, Activity, GitBranch, BookOpen, LogOut, User, Globe } from 'lucide-react';
 
 const tabs = [
   { id: 'datasets', label: 'Datasets', icon: Database },
+  { id: 'api-sources', label: 'API Sources', icon: Globe },
   { id: 'processing', label: 'Processing', icon: Wrench },
   { id: 'training', label: 'ML Training', icon: Brain },
   { id: 'crawl', label: 'Crawl Monitor', icon: Activity },

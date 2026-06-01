@@ -72,6 +72,78 @@ function StageChip({ label, enabled }) {
     );
 }
 
+// Compact live stepper shown inside each workflow card while running
+function MiniPipelineStepper({ running, workflowStages }) {
+    const STAGES = ['crawl', 'processing', 'ml'];
+    const LABELS = { crawl: 'Crawl', processing: 'Process', ml: 'ML' };
+    const enabledStages = STAGES.filter(s => workflowStages?.[s]?.enabled);
+    const liveMap = running?.stages || {};
+
+    return (
+        <div style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            marginTop: 'var(--space-xs)', flexWrap: 'wrap',
+        }}>
+            {enabledStages.map((stage, i) => {
+                const live     = liveMap[stage];
+                const isCurrent = running?.stage === stage && running?.status === 'running';
+                const isDone    = live?.status === 'completed';
+                const isFailed  = live?.status === 'failed';
+                const isActive  = isCurrent || live?.status === 'running';
+
+                return (
+                    <React.Fragment key={stage}>
+                        {i > 0 && (
+                            <div style={{
+                                width: 14, height: 1,
+                                background: isDone ? 'var(--color-success)' : 'var(--border-light)',
+                                flexShrink: 0,
+                            }} />
+                        )}
+                        <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+                            transition: 'all 0.3s',
+                            background: isDone
+                                ? 'rgba(22,163,74,0.12)'
+                                : isFailed
+                                    ? 'rgba(220,38,38,0.12)'
+                                    : isActive
+                                        ? 'rgba(79,70,229,0.12)'
+                                        : 'var(--bg-secondary)',
+                            color: isDone
+                                ? 'var(--color-success)'
+                                : isFailed
+                                    ? 'var(--color-error)'
+                                    : isActive
+                                        ? 'var(--color-primary)'
+                                        : 'var(--text-muted)',
+                            border: `1px solid ${
+                                isDone   ? 'rgba(22,163,74,0.3)'
+                                : isFailed  ? 'rgba(220,38,38,0.3)'
+                                : isActive  ? 'rgba(79,70,229,0.3)'
+                                : 'var(--border-light)'
+                            }`,
+                        }}>
+                            {isActive  && <span className="spinner" style={{ width: 8, height: 8 }} />}
+                            {isDone    && <CheckCircle size={8} />}
+                            {isFailed  && <XCircle    size={8} />}
+                            {LABELS[stage]}
+                        </span>
+                    </React.Fragment>
+                );
+            })}
+            {running?.message && (
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 4 }}>
+                    {running.message.length > 50
+                        ? running.message.slice(0, 50) + '…'
+                        : running.message}
+                </span>
+            )}
+        </div>
+    );
+}
+
 export default function Workflows({ wsEvents = [] }) {
     const [workflows, setWorkflows] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -139,10 +211,18 @@ export default function Workflows({ wsEvents = [] }) {
         setRunningWorkflows(prev => ({
             ...prev,
             [wfId]: {
-                status: latest.status,
-                stage: latest.stage,
+                ...prev[wfId],
+                status:  latest.status,
+                stage:   latest.stage,
                 message: latest.message,
-                error: latest.error,
+                error:   latest.error,
+                // Accumulate per-stage: keep completed stages visible as new ones start
+                stages: {
+                    ...(prev[wfId]?.stages || {}),
+                    ...(latest.stage ? {
+                        [latest.stage]: { status: latest.status, message: latest.message }
+                    } : {}),
+                },
             }
         }));
 
@@ -1012,21 +1092,12 @@ export default function Workflows({ wsEvents = [] }) {
                                         <StageChip label="ML Training" enabled={wf.stages?.ml?.enabled} />
                                     </div>
 
-                                    {/* Live progress */}
+                                    {/* Live pipeline stepper */}
                                     {running && (
-                                        <div className={`log-entry ${running.status === 'failed' ? 'error' :
-                                            running.status === 'completed' ? 'success' : 'info'
-                                            }`} style={{ marginTop: 'var(--space-xs)' }}>
-                                            {running.stage && (
-                                                <span className="badge badge-neutral"
-                                                    style={{ marginRight: 6, fontSize: 10 }}>
-                                                    {running.stage}
-                                                </span>
-                                            )}
-                                            <span style={{ fontSize: 12 }}>
-                                                {running.error || running.message}
-                                            </span>
-                                        </div>
+                                        <MiniPipelineStepper
+                                            running={running}
+                                            workflowStages={wf.stages}
+                                        />
                                     )}
 
                                     {/* ── Run History Panel ── */}

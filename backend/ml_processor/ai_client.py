@@ -78,6 +78,9 @@ class MLAdvisorInterpretation(BaseModel):
             return [v]
         return v
 
+class JsonPathSuggestion(BaseModel):
+    path: str = Field(description="The dot-notation path to the array of objects (e.g., 'data.results'). Return empty string if root is array.")
+
 # -------------------------
 # Operation Parameter Schema (used by suggest_pipeline)
 # -------------------------
@@ -425,3 +428,28 @@ USER INTENT: {intent}
         
         result_json = response.choices[0].message.content
         return schema.model_validate_json(result_json)
+
+    def suggest_json_path(self, raw_data: Any) -> str:
+        if not raw_data:
+            return ""
+        # 1. Take a structural snapshot (first 2 items) to save tokens
+        snapshot = raw_data[:2] if isinstance(raw_data, list) else raw_data
+        context = json.dumps(snapshot)[:1500] 
+        
+        system_prompt = """You are a Data Engineering API expert. 
+        Analyze the provided JSON structure. 
+        Return a JSON object with a single key 'path'. 
+        If the response is a direct list, return path: "". 
+        If it is nested (e.g., {"results": [...]}), return path: "results"."""
+        
+        response = self.client.chat.completions.create(
+            model="deepseek-chat",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"JSON Context: {context}"}
+            ]
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result.get("path", "")

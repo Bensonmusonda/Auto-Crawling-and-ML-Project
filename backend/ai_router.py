@@ -254,3 +254,32 @@ async def suggest_selector(
             ai_css=None,
             ai_xpath=None
         )
+
+# Add to ai_router.py
+
+class JsonPathRequest(BaseModel):
+    url: str
+    headers: Dict[str, str]
+
+@router.post("/analyze-json-path")
+async def analyze_json_path(req: JsonPathRequest):
+    # ADDED LOGGING for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        import httpx
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(req.url, headers=req.headers)
+            # Check if response is valid JSON before parsing
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="API responded with error")
+            data = resp.json()
+        
+        # Call the client
+        path = client.suggest_json_path(data)
+        return {"path": path}
+        
+    except Exception as e:
+        logger.error(f"AI Path Analysis Error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"AI Service error: {str(e)}")

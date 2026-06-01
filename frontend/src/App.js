@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
+import ApiDataSources from './components/ApiDataSources';
 import Sidebar from './components/Sidebar';
 import DatasetExplorer from './components/DatasetExplorer';
 import DataProcessing from './components/DataProcessing';
@@ -172,6 +173,8 @@ export default function App() {
             onClearEvents={() => setEvents([])}
           />
         );
+      case 'api-sources': // <-- ADD THIS CASE
+        return <ApiDataSources />;
       case 'workflows':
         return <Workflows wsEvents={events} />;
       case 'docs':

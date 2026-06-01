@@ -67,6 +67,8 @@ def run_ownership_migrations():
     Idempotent. Safe to call multiple times.
     """
     try:
+        from api_source_router import run_api_source_config_migration
+
         with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
 
@@ -156,7 +158,7 @@ def run_ownership_migrations():
                             print(f"[db_utils] Migrated file to admin scoped dir: {os.path.basename(f)}")
                         except Exception as e:
                             print(f"[db_utils] Failed to migrate {f}: {e}")
-
+            run_api_source_config_migration()
     except Exception as exc:
         # Startup should not crash the server if PG isn't ready yet.
         # The migration will run again on the next lifespan cycle or can be

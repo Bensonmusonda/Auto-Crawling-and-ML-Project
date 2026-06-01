@@ -32,7 +32,7 @@ from documentation.core import build_registry
 from auth_router import router as auth_router
 from db_utils import run_ownership_migrations
 from ai_router import router as ai_router
-
+from api_source_router import router as api_source_router
 
 import os
 from contextlib import asynccontextmanager
@@ -75,6 +75,7 @@ app.include_router(websocket_router)
 app.include_router(predict_router)
 app.include_router(docs_router)
 app.include_router(ai_router)
+app.include_router(api_source_router)
 
 # Serve images referenced in docs (e.g. /docs-images/diagram.png)
 _docs_images_dir = os.getenv("DOCS_IMAGES_DIR", "/app/docs/images")

@@ -314,7 +314,7 @@ def add_workflow_log(run_id, stage, message, level='info'):
 
 
 @celery_app.task(bind=True, name='run_workflow')
-def run_workflow(self, workflow_id: int):
+def run_workflow(self, workflow_id: int, owner_id: int = None):
     job_id = self.request.id
     r = redis.Redis(host=REDIS_HOST, port=6379, db=0)
     import time

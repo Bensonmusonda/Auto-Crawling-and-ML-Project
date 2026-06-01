@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     ArrowLeft, Play, Edit2, Trash2, CheckCircle, XCircle,
     Clock, ChevronDown, ChevronUp, ExternalLink, Database,
-    Cpu, Globe, Settings, Terminal, RefreshCw, AlertTriangle
+    Cpu, Globe, Settings, Terminal, RefreshCw, AlertTriangle, Loader,
+    TrendingUp, Package, Layers
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -387,6 +388,374 @@ function RunRow({ run, defaultOpen }) {
     );
 }
 
+// ── Live Pipeline Stepper ────────────────────────────────────────────────────
+
+const STAGE_LABELS = { crawl: 'Crawl', processing: 'Processing', ml: 'ML Training' };
+const STAGE_ICONS  = { crawl: Globe,   processing: Settings,     ml: Cpu           };
+
+function CrawlLiveCounter({ crawlStats }) {
+    if (!crawlStats) return null;
+    const { itemCount, elapsedSecs } = crawlStats;
+    const mins = Math.floor(elapsedSecs / 60);
+    const secs = elapsedSecs % 60;
+    const elapsed = mins > 0
+        ? `${mins}m ${secs}s`
+        : `${secs}s`;
+    const rate = elapsedSecs > 0 ? (itemCount / elapsedSecs).toFixed(1) : '0.0';
+
+    return (
+        <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            marginTop: 4,
+        }}>
+            {/* Big animated item count */}
+            <div style={{
+                fontSize: 20, fontWeight: 800, fontFamily: 'monospace',
+                color: 'var(--color-primary)',
+                letterSpacing: '-0.5px',
+                lineHeight: 1,
+                transition: 'all 0.3s',
+            }}>
+                {itemCount.toLocaleString()}
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)' }}>
+                items scraped
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                <span style={{
+                    fontSize: 9, color: 'var(--text-tertiary)',
+                    background: 'var(--bg-tertiary)',
+                    padding: '1px 5px', borderRadius: 4,
+                }}>
+                    {elapsed}
+                </span>
+                <span style={{
+                    fontSize: 9, color: 'var(--text-tertiary)',
+                    background: 'var(--bg-tertiary)',
+                    padding: '1px 5px', borderRadius: 4,
+                }}>
+                    {rate}/s
+                </span>
+            </div>
+        </div>
+    );
+}
+
+function LivePipelineStepper({ enabledStages, liveStages, crawlStats }) {
+    return (
+        <div style={{
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            gap: 0,
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-light)',
+            borderRadius: 'var(--radius-md)',
+            padding: '16px 20px',
+            marginBottom: 'var(--space-md)',
+        }}>
+            {enabledStages.map((stage, i) => {
+                const live   = liveStages[stage];
+                const status = live?.status || 'pending';
+                const isActive = status === 'running';
+                const isDone   = status === 'completed';
+                const isFailed = status === 'failed';
+                const Icon = STAGE_ICONS[stage] || Database;
+                const showCrawlStats = stage === 'crawl' && (isActive || isDone) && crawlStats;
+
+                const dotColor = isDone
+                    ? 'var(--color-success)'
+                    : isFailed
+                        ? 'var(--color-error)'
+                        : isActive
+                            ? 'var(--color-primary)'
+                            : 'var(--border-light)';
+
+                const lineColor = isDone ? 'var(--color-success)' : 'var(--border-light)';
+
+                return (
+                    <React.Fragment key={stage}>
+                        {i > 0 && (
+                            <div style={{
+                                flex: 1, minWidth: 24, height: 2,
+                                background: lineColor,
+                                margin: '0 8px',
+                                transition: 'background 0.4s',
+                                alignSelf: 'flex-start', marginTop: 17,
+                            }} />
+                        )}
+                        <div style={{
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', gap: 6,
+                            minWidth: showCrawlStats ? 100 : 80,
+                            textAlign: 'center',
+                        }}>
+                            {/* Circle icon */}
+                            <div style={{
+                                width: 38, height: 38, borderRadius: '50%',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                background: isDone
+                                    ? 'rgba(22,163,74,0.12)'
+                                    : isFailed
+                                        ? 'rgba(220,38,38,0.12)'
+                                        : isActive
+                                            ? 'rgba(79,70,229,0.12)'
+                                            : 'var(--bg-tertiary)',
+                                border: `2px solid ${dotColor}`,
+                                transition: 'all 0.35s',
+                            }}>
+                                {isDone   && <CheckCircle size={17} color="var(--color-success)" />}
+                                {isFailed && <XCircle    size={17} color="var(--color-error)" />}
+                                {isActive && <span className="spinner" style={{ width: 16, height: 16 }} />}
+                                {status === 'pending' && <Icon size={15} color="var(--text-tertiary)" />}
+                            </div>
+                            {/* Label */}
+                            <div style={{
+                                fontSize: 11, fontWeight: 600,
+                                color: isDone
+                                    ? 'var(--color-success)'
+                                    : isFailed
+                                        ? 'var(--color-error)'
+                                        : isActive
+                                            ? 'var(--color-primary)'
+                                            : 'var(--text-muted)',
+                                transition: 'color 0.3s',
+                            }}>
+                                {STAGE_LABELS[stage]}
+                            </div>
+                            {/* Crawl live counter OR short message */}
+                            {showCrawlStats
+                                ? <CrawlLiveCounter crawlStats={crawlStats} />
+                                : live?.message && (
+                                    <div style={{
+                                        fontSize: 10, color: 'var(--text-tertiary)',
+                                        maxWidth: 88, lineHeight: 1.35,
+                                    }}>
+                                        {live.message.length > 45
+                                            ? live.message.slice(0, 45) + '…'
+                                            : live.message}
+                                    </div>
+                                )
+                            }
+                        </div>
+                    </React.Fragment>
+                );
+            })}
+        </div>
+    );
+}
+
+// ── Crawl Progress Panel ─────────────────────────────────────────────────────
+
+function CrawlProgressPanel({ liveStages, crawlStats, pagesCrawled, enabled, lastRunStageResult, isRunning }) {
+    if (!enabled) return null;
+
+    const crawlStatus = liveStages.crawl?.status;
+
+    // isActive: WS confirmed crawl is running, OR the workflow is running and
+    // crawl hasn't been marked done yet (covers the gap before the first WS event)
+    const wsActive  = crawlStatus === 'running';
+    const wsDone    = crawlStatus === 'completed';
+    const wsFailed  = crawlStatus === 'failed';
+
+    // lastRunStageResult?.status tells us what the DB recorded for the last run
+    const dbDone    = lastRunStageResult?.status === 'completed';
+    const dbFailed  = lastRunStageResult?.status === 'failed';
+
+    // Derive display state — WS is authoritative during a live run,
+    // DB is authoritative once the run is over
+    const isActive = isRunning && (wsActive || (!wsDone && !wsFailed));
+    const isDone   = wsDone || (!isRunning && dbDone);
+    const isFailed = wsFailed || (!isRunning && dbFailed);
+
+    // Hide with opacity when there's nothing to show — avoids layout shift from mounting/unmounting
+    const panelVisible = isRunning || !!lastRunStageResult;
+
+    // Use live stats when available, fall back to last run metrics for the frozen view
+    const itemCount  = crawlStats?.itemCount  ?? lastRunStageResult?.metrics?.items_scraped ?? 0;
+    const pagesCount = pagesCrawled           || lastRunStageResult?.metrics?.pages_crawled  || 0;
+    const elapsed    = crawlStats?.elapsedSecs ?? 0;
+    const rate       = elapsed > 0 ? (itemCount / elapsed).toFixed(1) : '—';
+
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const elapsedLabel = elapsed > 0
+        ? mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+        : '—';
+
+    const borderColor = isDone   ? 'var(--color-success)'
+                      : isFailed ? 'var(--color-error)'
+                      : isActive ? 'var(--color-primary)'
+                      :            'var(--border-light)';
+
+    const statusLabel = isActive ? 'Crawling…'
+                      : isDone   ? 'Completed'
+                      : isFailed ? 'Failed'
+                      :            'Waiting';
+
+    const statusColor = isActive ? 'var(--color-primary)'
+                      : isDone   ? 'var(--color-success)'
+                      : isFailed ? 'var(--color-error)'
+                      :            'var(--text-muted)';
+
+    return (
+        <div style={{
+            border: `1px solid ${borderColor}`,
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-secondary)',
+            marginBottom: 'var(--space-md)',
+            overflow: 'hidden',
+            transition: 'border-color 0.3s, opacity 0.2s',
+            opacity: panelVisible ? 1 : 0,
+            pointerEvents: panelVisible ? 'auto' : 'none',
+        }}>
+            {/* Header */}
+            <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderBottom: '1px solid var(--border-light)',
+                background: 'var(--bg-primary)',
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Globe size={14} color={statusColor} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Crawl Progress
+                    </span>
+                    {isActive && (
+                        <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            fontSize: 10, padding: '1px 7px', borderRadius: 20,
+                            background: 'rgba(79,70,229,0.12)',
+                            color: 'var(--color-primary)',
+                            fontWeight: 600,
+                            animation: 'pulse 2s infinite',
+                        }}>
+                            <Loader size={9} style={{ animation: 'spin 1s linear infinite' }} />
+                            LIVE
+                        </span>
+                    )}
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: statusColor }}>
+                    {statusLabel}
+                </span>
+            </div>
+
+            {/* Metrics grid */}
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 0,
+            }}>
+                {/* Items scraped */}
+                <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    padding: '14px 8px',
+                    borderRight: '1px solid var(--border-light)',
+                }}>
+                    <Package size={14} color="var(--text-muted)" style={{ marginBottom: 6 }} />
+                    <div style={{
+                        fontSize: 22, fontWeight: 800, fontFamily: 'monospace',
+                        color: isActive ? 'var(--color-primary)' : 'var(--text-primary)',
+                        letterSpacing: '-0.5px', lineHeight: 1,
+                        transition: 'color 0.3s',
+                    }}>
+                        {itemCount.toLocaleString()}
+                    </div>
+                    <div style={{
+                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginTop: 4,
+                    }}>
+                        items scraped
+                    </div>
+                </div>
+
+                {/* Pages crawled */}
+                <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    padding: '14px 8px',
+                    borderRight: '1px solid var(--border-light)',
+                }}>
+                    <Layers size={14} color="var(--text-muted)" style={{ marginBottom: 6 }} />
+                    <div style={{
+                        fontSize: 22, fontWeight: 800, fontFamily: 'monospace',
+                        color: isActive ? 'var(--color-primary)' : 'var(--text-primary)',
+                        letterSpacing: '-0.5px', lineHeight: 1,
+                        transition: 'color 0.3s',
+                    }}>
+                        {pagesCount.toLocaleString()}
+                    </div>
+                    <div style={{
+                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginTop: 4,
+                    }}>
+                        pages crawled
+                    </div>
+                </div>
+
+                {/* Rate */}
+                <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    padding: '14px 8px',
+                    borderRight: '1px solid var(--border-light)',
+                }}>
+                    <TrendingUp size={14} color="var(--text-muted)" style={{ marginBottom: 6 }} />
+                    <div style={{
+                        fontSize: 22, fontWeight: 800, fontFamily: 'monospace',
+                        color: isActive ? 'var(--color-primary)' : 'var(--text-primary)',
+                        letterSpacing: '-0.5px', lineHeight: 1,
+                    }}>
+                        {isActive ? rate : '—'}
+                    </div>
+                    <div style={{
+                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginTop: 4,
+                    }}>
+                        items / sec
+                    </div>
+                </div>
+
+                {/* Elapsed */}
+                <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    padding: '14px 8px',
+                }}>
+                    <Clock size={14} color="var(--text-muted)" style={{ marginBottom: 6 }} />
+                    <div style={{
+                        fontSize: 22, fontWeight: 800, fontFamily: 'monospace',
+                        color: isActive ? 'var(--color-primary)' : 'var(--text-primary)',
+                        letterSpacing: '-0.5px', lineHeight: 1,
+                    }}>
+                        {elapsedLabel}
+                    </div>
+                    <div style={{
+                        fontSize: 9, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginTop: 4,
+                    }}>
+                        elapsed
+                    </div>
+                </div>
+            </div>
+
+            {/* Active progress bar */}
+            {isActive && (
+                <div style={{ height: 3, background: 'var(--border-light)', overflow: 'hidden' }}>
+                    <div style={{
+                        height: '100%',
+                        width: '40%',
+                        background: 'var(--color-primary)',
+                        borderRadius: 2,
+                        animation: 'crawlSweep 1.8s ease-in-out infinite',
+                    }} />
+                </div>
+            )}
+            {isDone && (
+                <div style={{ height: 3, background: 'var(--color-success)' }} />
+            )}
+            {isFailed && (
+                <div style={{ height: 3, background: 'var(--color-error)' }} />
+            )}
+        </div>
+    );
+}
+
 // ── Main WorkflowDetail ───────────────────────────────────────────────────────
 
 export default function WorkflowDetail({
@@ -406,6 +775,18 @@ export default function WorkflowDetail({
     const [limit, setLimit] = useState(10);
     const [activeSection, setActiveSection] = useState('history'); // 'history' | 'config'
 
+    // Per-stage live status accumulated from WebSocket events
+    const [liveStages, setLiveStages] = useState({});
+    const wasRunningRef = useRef(false);
+
+    // Live crawl stats: item count + elapsed time while crawl stage is active
+    const [crawlStats, setCrawlStats] = useState(null);
+    const crawlJobIdRef = useRef(null);   // crawl_job_id for the active run
+    const crawlStartRef = useRef(null);   // epoch ms when crawl stage started
+    const [elapsedSecs, setElapsedSecs] = useState(0);
+    // Pages crawled — extracted from WS progress events (not in polling endpoint)
+    const [pagesCrawled, setPagesCrawled] = useState(0);
+
     const fetchRuns = useCallback(async (lim = 10, silent = false) => {
         if (!silent) lim === 10 ? setLoadingRuns(true) : setLoadingMore(true);
         try {
@@ -424,15 +805,117 @@ export default function WorkflowDetail({
         fetchRuns(10);
     }, [fetchRuns]);
 
-    // Refresh on completed/failed ws event for this workflow
+    // Accumulate per-stage live status + refresh history on terminal events
     useEffect(() => {
         if (!wsEvents?.length) return;
         const latest = wsEvents[0];
         if (latest?.workflow_id !== workflow.id) return;
+
+        // Accumulate per-stage: once a stage completes we keep its ✓
+        if (latest.stage) {
+            setLiveStages(prev => ({
+                ...prev,
+                [latest.stage]: { status: latest.status, message: latest.message },
+            }));
+        }
+
+        // Track when crawl stage starts so we can compute elapsed time
+        if (latest.stage === 'crawl' && latest.status === 'running' && !crawlStartRef.current) {
+            crawlStartRef.current = Date.now();
+            setElapsedSecs(0);
+        }
+
+        // Extract pages_crawled from progress events — only present in crawl progress messages
+        if (latest.stage === 'crawl' && latest.type === 'progress' && latest.data?.pages_crawled != null) {
+            setPagesCrawled(latest.data.pages_crawled);
+        }
+
+        // Refresh history on terminal event
         if (latest.status === 'completed' || latest.status === 'failed') {
             fetchRuns(limit, true);
         }
     }, [wsEvents, workflow.id, limit, fetchRuns]);
+
+    // Reset live stage map + crawl tracking when a brand-new run starts
+    useEffect(() => {
+        if (isRunning && !wasRunningRef.current) {
+            setLiveStages({});
+            setCrawlStats(null);
+            crawlJobIdRef.current = null;
+            crawlStartRef.current = null;
+            setElapsedSecs(0);
+            setPagesCrawled(0);
+        }
+        wasRunningRef.current = isRunning;
+    }, [isRunning]);
+
+    // Capture crawl_job_id from the latest run record as soon as it's available
+    useEffect(() => {
+        if (!isRunning) return;
+        const latest = runs[0];
+        if (latest?.crawl_job_id && !crawlJobIdRef.current) {
+            crawlJobIdRef.current = latest.crawl_job_id;
+        }
+    }, [runs, isRunning]);
+
+    // Poll /api/crawl/jobs every 2.5 s while workflow is running and crawl is enabled
+    // Use isRunning as primary gate — liveStages.crawl may lag behind actual crawl start
+    useEffect(() => {
+        const crawlEnabled = enabledStages.includes('crawl');
+        const crawlDone = liveStages.crawl?.status === 'completed' || liveStages.crawl?.status === 'failed';
+        const isCrawling = isRunning && crawlEnabled && !crawlDone;
+        if (!isCrawling) return;
+
+        const tick = async () => {
+            // Update elapsed time
+            if (crawlStartRef.current) {
+                setElapsedSecs(Math.floor((Date.now() - crawlStartRef.current) / 1000));
+            }
+            // Fetch item count
+            const jobId = crawlJobIdRef.current;
+            if (!jobId) return;
+            try {
+                const token = localStorage.getItem('auth_token');
+                const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                const res = await fetch(`${API_BASE}/api/crawl/jobs`, { headers });
+                if (!res.ok) return;
+                const jobs = await res.json();
+                const match = jobs.find(j => j.job_id === jobId);
+                if (match) {
+                    setCrawlStats(prev => ({
+                        itemCount: match.item_count ?? prev?.itemCount ?? 0,
+                        elapsedSecs: crawlStartRef.current
+                            ? Math.floor((Date.now() - crawlStartRef.current) / 1000)
+                            : (prev?.elapsedSecs ?? 0),
+                    }));
+                }
+            } catch (_) {}
+        };
+
+        tick(); // run immediately
+        const id = setInterval(tick, 2500);
+        return () => clearInterval(id);
+    }, [liveStages.crawl?.status]);
+
+    // Freeze crawl stats on completion so final count stays visible
+    useEffect(() => {
+        if (liveStages.crawl?.status === 'completed' && crawlStartRef.current) {
+            setElapsedSecs(Math.floor((Date.now() - crawlStartRef.current) / 1000));
+        }
+    }, [liveStages.crawl?.status]);
+
+    // Combine elapsed from state (ticked by interval) into crawlStats
+    const enrichedCrawlStats = crawlStats
+        ? { ...crawlStats, elapsedSecs }
+        : null;
+
+    // Polling fallback: re-fetch history every 4 s while a run is active
+    // Guards against WebSocket events that are missed or arrive out-of-order
+    useEffect(() => {
+        if (!isRunning) return;
+        const id = setInterval(() => fetchRuns(limit, true), 4000);
+        return () => clearInterval(id);
+    }, [isRunning, limit, fetchRuns]);
 
     const loadMore = () => {
         const next = limit + 10;
@@ -451,6 +934,13 @@ export default function WorkflowDetail({
 
     return (
         <div className="page-container">
+            {/* Keyframes for crawl progress bar animation */}
+            <style>{`
+                @keyframes crawlSweep {
+                    0%   { transform: translateX(-150%); }
+                    100% { transform: translateX(350%); }
+                }
+            `}</style>
             {/* ── Back + Title ── */}
             <div style={{ marginBottom: 'var(--space-lg)' }}>
                 <button
@@ -504,43 +994,70 @@ export default function WorkflowDetail({
                 </div>
             </div>
 
-            {/* ── Live run banner ── */}
-            {isRunning && runningInfo && (
-                <div className={`log-entry ${runningInfo.status === 'failed' ? 'error' : 'info'}`}
-                    style={{ marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="spinner" style={{ width: 12, height: 12 }} />
-                    {runningInfo.stage && (
-                        <span className="badge badge-neutral" style={{ fontSize: 10 }}>
-                            {runningInfo.stage}
-                        </span>
-                    )}
-                    <span style={{ fontSize: 12 }}>{runningInfo.message || 'Running…'}</span>
+            {/* ── Live pipeline stepper — always mounted to avoid layout shift ── */}
+            {enabledStages.length > 0 && (
+                <div style={{
+                    overflow: 'hidden',
+                    maxHeight: isRunning ? 120 : 0,
+                    opacity: isRunning ? 1 : 0,
+                    transition: 'max-height 0.3s ease, opacity 0.2s ease',
+                    marginBottom: isRunning ? 'var(--space-md)' : 0,
+                }}>
+                    <LivePipelineStepper
+                        enabledStages={enabledStages}
+                        liveStages={liveStages}
+                        crawlStats={enrichedCrawlStats}
+                    />
                 </div>
             )}
 
-            {/* ── Stats row ── */}
-            {!loadingRuns && (
-                <div className="grid-4" style={{ marginBottom: 'var(--space-lg)' }}>
-                    <div className="stat-card">
-                        <div className="stat-label">Total Runs</div>
-                        <div className="stat-value">{totalRuns}{hasMore ? '+' : ''}</div>
-                    </div>
-                    <div className="stat-card">
-                        <div className="stat-label">Successful</div>
-                        <div className="stat-value success">{successCount}</div>
-                    </div>
-                    <div className="stat-card">
-                        <div className="stat-label">Failed</div>
-                        <div className="stat-value error">{failCount}</div>
-                    </div>
-                    <div className="stat-card">
-                        <div className="stat-label">Last Run</div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 4 }}>
-                            {lastRun ? formatDate(lastRun.started_at) : '—'}
-                        </div>
+            {/* ── Crawl Progress Panel ── */}
+            {enabledStages.includes('crawl') && (
+                <CrawlProgressPanel
+                    liveStages={liveStages}
+                    crawlStats={enrichedCrawlStats}
+                    pagesCrawled={pagesCrawled}
+                    enabled={true}
+                    isRunning={isRunning}
+                    lastRunStageResult={runs[0]?.stage_results?.crawl ?? null}
+                />
+            )}
+
+            {/* ── Stats row — always rendered to avoid layout shift ── */}
+            <div className="grid-4" style={{ marginBottom: 'var(--space-lg)' }}>
+                <div className="stat-card">
+                    <div className="stat-label">Total Runs</div>
+                    <div className="stat-value">
+                        {loadingRuns
+                            ? <span style={{ display: 'inline-block', width: 24, height: 20, borderRadius: 4, background: 'var(--border-light)' }} />
+                            : <>{totalRuns}{hasMore ? '+' : ''}</>}
                     </div>
                 </div>
-            )}
+                <div className="stat-card">
+                    <div className="stat-label">Successful</div>
+                    <div className="stat-value success">
+                        {loadingRuns
+                            ? <span style={{ display: 'inline-block', width: 24, height: 20, borderRadius: 4, background: 'var(--border-light)' }} />
+                            : successCount}
+                    </div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-label">Failed</div>
+                    <div className="stat-value error">
+                        {loadingRuns
+                            ? <span style={{ display: 'inline-block', width: 24, height: 20, borderRadius: 4, background: 'var(--border-light)' }} />
+                            : failCount}
+                    </div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-label">Last Run</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 4 }}>
+                        {loadingRuns
+                            ? <span style={{ display: 'inline-block', width: 80, height: 16, borderRadius: 4, background: 'var(--border-light)' }} />
+                            : lastRun ? formatDate(lastRun.started_at) : '—'}
+                    </div>
+                </div>
+            </div>
 
             {/* ── Section tabs ── */}
             <div className="tab-bar">
