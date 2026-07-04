@@ -15,6 +15,7 @@ services:
     command: celery -A tasks worker --loglevel=info
     depends_on:
       - redis
+      - postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -23,6 +24,7 @@ services:
       - scraper_network
     environment:
       - PYTHONDONTWRITEBYTECODE=1
+      - DB_HOST=postgres
     volumes:
       - ./scraping module:/app
 
@@ -34,10 +36,12 @@ services:
     environment:
       - WATCHFILES_FORCE_POLLING=true
       - PYTHONDONTWRITEBYTECODE=1
+      - DB_HOST=postgres
     ports:
       - "8000:8000"
     depends_on:
       - redis
+      - postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -47,17 +51,17 @@ services:
     volumes:
       - ./backend:/app
 
-  # postgres:  # Disabled — using host PostgreSQL service instead
-  #   image: postgres:14-alpine
-  #   container_name: postgres_service
-  #   env_file:
-  #     - .env
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
-  #   networks:
-  #     - scraper_network
+  postgres:
+    image: postgres:14-alpine
+    container_name: postgres_service
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - scraper_network
 
   ml_worker:
     image: app-backend:latest
@@ -66,12 +70,16 @@ services:
     command: celery -A tasks worker --loglevel=info -Q ml_tasks --concurrency=4
     depends_on:
       - redis
+      - postgres
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     networks:
       - scraper_network
     environment:
       - PYTHONDONTWRITEBYTECODE=1
+      - DB_HOST=postgres
     volumes:
       - ./backend:/app
 
@@ -89,6 +97,9 @@ services:
       - scraper_network
     environment:
       - WDS_SOCKET_PORT=0
+
+volumes:
+  pgdata:
 
 networks:
   scraper_network:
