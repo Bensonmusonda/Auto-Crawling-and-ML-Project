@@ -37,7 +37,7 @@ graph TD
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Bensonmusonda/Auto-Crawling-and-ML-Project
    cd "Auto crawling and ML project"
    ```
 
